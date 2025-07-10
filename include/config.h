@@ -42,7 +42,8 @@ enum LANG{
 };
 
 enum ClocMethod{
-    NAIVE_CLOC = 0,
+    NON_CLOC=0,
+    NAIVE_CLOC ,
     DC_NON_ALIGN,
     DC_NEWLINE,
     DC_NEW_MULTI
@@ -258,7 +259,9 @@ class Config{
         }
 
         enum ClocMethod clocMethodTrans(char* s){
-            if(strcmp(s, "naive-cloc") == 0){
+            if(strcmp(s,"non-cloc") == 0){
+                return NON_CLOC;
+            }else if(strcmp(s, "naive-cloc") == 0){
                 return NAIVE_CLOC;
             } else if(strcmp(s, "non-align") == 0){
                 return DC_NON_ALIGN;

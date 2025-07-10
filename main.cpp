@@ -565,7 +565,7 @@ void writeFile(string path){
 
         while(file_offset < n_read){  
             gettimeofday(&chunking_time_start, NULL);
-            if(cloc_method == DC_NON_ALIGN || cloc_method == NAIVE_CLOC){
+            if(cloc_method == NON_CLOC ||cloc_method == DC_NON_ALIGN || cloc_method == NAIVE_CLOC){
                 chunk_length = chunking(file_cache + file_offset, n_read - file_offset);
             }else if(cloc_method == DC_NEWLINE){
                 chunk_length = chunking(file_cache + file_offset, n_read - file_offset);
@@ -605,7 +605,7 @@ void writeFile(string path){
                                     Config::getInstance().getContainersPath().c_str());
                 
                 // 唯一块需要扫描cloc
-                if(cloc_method != NAIVE_CLOC){
+                if(cloc_method != NAIVE_CLOC&&cloc_method!=NON_CLOC){
                     gettimeofday(&LOC_time_start, NULL);
                     countLines(file_cache + file_offset, chunk_length, chunk_code_lines, chunk_comment_lines, chunk_blank_lines);
                     gettimeofday(&LOC_time_end, NULL);
