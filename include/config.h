@@ -46,7 +46,8 @@ enum ClocMethod{
     NAIVE_CLOC ,
     DC_NON_ALIGN,
     DC_NEWLINE,
-    DC_NEW_MULTI
+    DC_NEW_MULTI,
+    DC_OFFLINE
 };
 
 class Config{
@@ -269,6 +270,8 @@ class Config{
                 return DC_NEWLINE;
             } else if (strcmp(s, "new+multi") == 0){
                 return DC_NEW_MULTI;
+            } else if (strcmp(s, "dedup-cloc-offline") == 0){
+                return DC_OFFLINE;
             }
             // should not reach here
             printf("cloc方法转换失败\n");

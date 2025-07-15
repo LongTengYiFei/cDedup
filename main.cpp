@@ -797,6 +797,8 @@ void restoreVersion(int version){
         uint64_t chunk_code_lines = 0;
         uint64_t chunk_comment_lines = 0;
         uint64_t chunk_blank_lines = 0;
+
+        enum ClocMethod cloc_method = Config::getInstance().getClocMethod();
         
         for(auto &x : file_recipe){
             SHA1FP fp;
@@ -811,25 +813,30 @@ void restoreVersion(int version){
             ENTRY_VALUE ev = GlobalMetadataManagerPtr->getEntry(fp);
             std::string ck_data = cc->getChunkData(ev);
 
-            // DedupCloc
-            if(restore_LOC_set.find(fp) == restore_LOC_set.end()){
+            if(cloc_method == NAIVE_CLOC){
                 gettimeofday(&LOC_time_start, NULL);
                 countLines((uint8_t*)ck_data.data(), ck_data.size(), 
                 chunk_code_lines, chunk_comment_lines, chunk_blank_lines);
                 gettimeofday(&LOC_time_end, NULL);
                 LOC_time += (LOC_time_end.tv_sec - LOC_time_start.tv_sec) * 1000000 + 
-                                        LOC_time_end.tv_usec - LOC_time_start.tv_usec;
-                restore_LOC_set.insert(fp);
+                                            LOC_time_end.tv_usec - LOC_time_start.tv_usec;
+            }else if(cloc_method == DC_OFFLINE){
+                if(restore_LOC_set.find(fp) == restore_LOC_set.end()){
+                    gettimeofday(&LOC_time_start, NULL);
+                    countLines((uint8_t*)ck_data.data(), ck_data.size(), 
+                    chunk_code_lines, chunk_comment_lines, chunk_blank_lines);
+                    gettimeofday(&LOC_time_end, NULL);
+                    LOC_time += (LOC_time_end.tv_sec - LOC_time_start.tv_sec) * 1000000 + 
+                                            LOC_time_end.tv_usec - LOC_time_start.tv_usec;
+                    restore_LOC_set.insert(fp);
+                }
+            }else if(cloc_method == NON_CLOC){
+                ;
+            }else{
+                printf("不正确的恢复cloc模式");
+                exit(-1);
             }
-
-            // // NaiveCloc
-            // gettimeofday(&LOC_time_start, NULL);
-            // countLines((uint8_t*)ck_data.data(), ck_data.size(), 
-            // chunk_code_lines, chunk_comment_lines, chunk_blank_lines);
-            // gettimeofday(&LOC_time_end, NULL);
-            // LOC_time += (LOC_time_end.tv_sec - LOC_time_start.tv_sec) * 1000000 + 
-            //                              LOC_time_end.tv_usec - LOC_time_start.tv_usec;
-
+        
             if(ck_data.size() != ev.chunk_length){
                 printf("Fatal error size different!!!\n");
                 exit(-1);
@@ -871,10 +878,11 @@ int main(int argc, char** argv){
     GlobalStat::getInstance().parse_arguments(global_stat_path);
     
     GlobalMetadataManagerPtr = new MetadataManager(Config::getInstance().getFingerprintsFilePath().c_str());
-    if(Config::getInstance().getTaskType() == TASK_LOC){
-        enum LANG language_type = Config::getInstance().getLanugage();    
-        initCountLines(language_type);
+    
+    enum LANG language_type = Config::getInstance().getLanugage();    
+    initCountLines(language_type);
 
+    if(Config::getInstance().getTaskType() == TASK_LOC){
         string input_path = Config::getInstance().getInputPath();
 
         if (!fs::exists(input_path)) {
@@ -902,9 +910,6 @@ int main(int argc, char** argv){
         }
 
         initChunkingAlgorithm();
-
-        enum LANG language_type = Config::getInstance().getLanugage();    
-        initCountLines(language_type);
 
         string input_path = Config::getInstance().getInputPath();
 
