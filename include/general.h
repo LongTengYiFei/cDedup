@@ -22,7 +22,7 @@
 #include <openssl/sha.h>
 
 #define MB (1024*1024)
-#define FILE_CACHE (256*1024*1024)
+#define FILE_CACHE (1024*1024*1024)
 #define CONTAINER_SIZE (4*1024*1024)
 
 
