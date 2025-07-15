@@ -57,8 +57,9 @@ int fortran_file_num = 0;
 uint64_t global_code_line = 0;
 uint64_t global_blank_line = 0;
 uint64_t global_comment_line = 0;
-uint64_t LOC_time = 0;
-uint64_t chunking_time = 0;
+uint64_t LOC_time = 0; // used for both inline and offline 
+uint64_t container_io_time = 0; // only used for both offline 
+uint64_t chunking_time = 0; 
 struct timeval LOC_time_start, LOC_time_end;
 struct timeval chunking_time_start, chunking_time_end;
 uint64_t restore_size = 0;
@@ -821,6 +822,7 @@ void restoreVersion(int version){
                 LOC_time += (LOC_time_end.tv_sec - LOC_time_start.tv_sec) * 1000000 + 
                                             LOC_time_end.tv_usec - LOC_time_start.tv_usec;
             }else if(cloc_method == DC_OFFLINE){
+                // 该方法实际上统计出的CLOC时间是准的，但是container io的时间和naive cloc一样；
                 if(restore_LOC_set.find(fp) == restore_LOC_set.end()){
                     gettimeofday(&LOC_time_start, NULL);
                     countLines((uint8_t*)ck_data.data(), ck_data.size(), 
@@ -856,6 +858,8 @@ void restoreVersion(int version){
 
         flushAssemblingBuffer(fd, assembling_buffer, write_buffer_offset);
         close(fd);
+        container_io_time += cc->getStorageIOTime();
+        
     }else{
         printf("暂不支持的恢复算法 %d\n", Config::getInstance().getRestoreMethod());
         exit(-1);
@@ -979,12 +983,13 @@ int main(int argc, char** argv){
         uint64_t single_dedup_time_us = (restore_time_end.tv_sec - restore_time_start.tv_sec) * 1000000 + restore_time_end.tv_usec - restore_time_start.tv_usec;
         float restore_throughput = (float)(restore_size) / MB / ((float)(single_dedup_time_us)/1000000);
         float LOC_time_percetage = float(LOC_time) / (float)single_dedup_time_us * 100; 
-
+        float container_io_time_percetage = float(container_io_time) / (float)single_dedup_time_us * 100;
         printf("-----------------------Restore statics----------------------\n");
-        printf("LOC time percentage %.2f%%\n", LOC_time_percetage);
+        printf("LOC time percentage %.2f%%, LOC time us %" PRIu64 "\n", LOC_time_percetage, LOC_time);
+        printf("Container IO time percentage %.2f%%, Container IO time us %" PRIu64 "\n", container_io_time_percetage, container_io_time);
+        printf("Other time percentage %.2f%%, Other time us %" PRIu64 "\n", 100 - LOC_time_percetage - container_io_time_percetage, single_dedup_time_us - LOC_time - container_io_time);
         printf("Restore size %ld\n", restore_size);
         printf("Restore Throughput %.2f MiB/s\n", restore_throughput);
-
     }
     return 0;
 }

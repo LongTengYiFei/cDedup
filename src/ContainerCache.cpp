@@ -28,7 +28,13 @@ void ContainerCache::loadContainer(int container_index){
     int fd = open(container_name.data(), O_RDONLY | O_DIRECT);
 
     memset(this->container_buf, 0, CONTAINER_SIZE);
+
+    struct timeval cIO_time_start, cIO_time_end;
+    gettimeofday(&cIO_time_start, NULL);
     int n = read(fd, this->container_buf, CONTAINER_SIZE); // 可能塞不满
+    gettimeofday(&cIO_time_end, NULL);
+    this->container_io_time += (cIO_time_end.tv_sec - cIO_time_start.tv_sec) * 1000000 + (cIO_time_end.tv_usec - cIO_time_start.tv_usec);
+
     std::string content(this->container_buf , n);
 
     this->cache[container_index] = content;

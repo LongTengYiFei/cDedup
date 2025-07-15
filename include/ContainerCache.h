@@ -17,6 +17,8 @@ class ContainerCache : public Cache{
                 fprintf(stderr, "posix_memalign failed: %s\n", strerror(ret));
                 exit(EXIT_FAILURE); // 或者抛出异常
             }
+
+            container_io_time = 0;
         }
 
         ~ContainerCache(){
@@ -24,6 +26,7 @@ class ContainerCache : public Cache{
         }
         
         virtual std::string getChunkData(ENTRY_VALUE ev);
+        uint64_t getStorageIOTime(){return this->container_io_time;}
 
     private:
         std::unordered_set<int> container_index_set;
@@ -32,6 +35,7 @@ class ContainerCache : public Cache{
         int cache_max_size;
         std::unordered_map<int, std::string> cache;
         char* container_buf;
+        uint64_t container_io_time;
 
         void loadContainer(int container_number);
         void evictContainerFIFO();
