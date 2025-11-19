@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <iostream>
+#include <vector>
 #include <unordered_map>
 #include "general.h"
 
@@ -54,13 +55,14 @@ class MetadataManager {
         //暂不支持中断打桩写入，只支持目录批量一次性写入，所以没有对应的load函数
         int save(int, int, int);
         LookupResult dedupLookup(SHA1FP sha1);
-        LookupResult dedupLookup(SHA1FP sha1, bool);
+        LookupResult dedupLookupDedupFirst(SHA1FP sha1, int );
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value);
-        int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, bool);
+        int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int);
         int addRefCnt(const SHA1FP sha1);
         ENTRY_VALUE getEntry(const SHA1FP sha1);
         std::string genFPname(int version, bool base);
         void loadDeltaDedupFp(std::string fp_name);
+        void reserveDedupFirstDeltaTable(int n); 
 
     private:
         std::string metadata_file_path;
@@ -71,5 +73,10 @@ class MetadataManager {
         // used for delta deduplication
         std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer> fp_table_base;
         std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer> fp_table_delta;
+
+        // dedup first
+        std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer> fp_table_first;
+        using fpTable = std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer>;
+        std::vector<fpTable> fp_tables_delta;
 };
 #endif

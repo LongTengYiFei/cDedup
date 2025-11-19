@@ -181,6 +181,26 @@ LookupResult MetadataManager::dedupLookup(SHA1FP sha1){
     return LookupResult{false, 0};
 }
 
+LookupResult MetadataManager::dedupLookupDedupFirst(SHA1FP sha1, int version_number){
+    auto dedupIter = this->fp_table_first.find(sha1);
+    if(dedupIter != this->fp_table_first.end()){
+        return LookupResult{true, dedupIter->second.container_number};
+    }
+
+    if(version_number != 0){
+        dedupIter = this->fp_tables_delta[version_number - 1].find(sha1);
+        if(dedupIter != this->fp_tables_delta[version_number - 1].end()){
+            return LookupResult{true, dedupIter->second.container_number};
+        }
+    }
+
+    return LookupResult{false, 0};
+}
+
+void MetadataManager::reserveDedupFirstDeltaTable(int n){
+    this->fp_tables_delta.resize(n);
+}
+
 // LookupResult MetadataManager::dedupLookup(SHA1FP sha1, bool in_delta){
 //     auto dedupIter = this->fp_table_base.find(sha1);
 //     if(dedupIter != this->fp_table_base.end())
@@ -199,11 +219,12 @@ int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value){
     return 0;
 }
 
-int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, bool in_delta){
-    if(in_delta)
-        this->fp_table_delta.emplace(sha1, value);
-    else    
-        this->fp_table_base.emplace(sha1, value);
+int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version){
+    if(version == 0){
+        this->fp_table_first.emplace(sha1, value);
+    }else{
+        this->fp_tables_delta[version - 1].emplace(sha1, value);
+    }
     return 0;
 }
 

@@ -41,9 +41,7 @@ struct backup_job{
 
 namespace fs = std::experimental::filesystem;
 
-uint32_t rev_container_cnt = 0;
-unsigned char rev_container_buf[CONTAINER_SIZE]={0};
-unsigned char tmp_buf[CONTAINER_SIZE]={0};
+
 
 char* global_stat_path = "/home/cyf/cDedup/global_stat.json";
 string dedup_log_path;
@@ -51,7 +49,12 @@ std::ofstream log_file;
 extern MetadataManager *GlobalMetadataManagerPtr;
 int (*chunking) (unsigned char*p, int n);
 struct backup_job bj;
+
+// 写任务
 uint32_t container_index = 0; // 控制当前写入的container index
+uint32_t rev_container_cnt = 0;
+unsigned char rev_container_buf[CONTAINER_SIZE]={0};
+unsigned char tmp_buf[CONTAINER_SIZE]={0};
 
 uint32_t getFilesNum(const char* dirPath){
     int ans = 0;
@@ -252,7 +255,6 @@ void writeFileNaive(string path){
             // Dedup
             LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp);
 
-            // 
             if(!lookup_result.dup){
                 // save chunk itself
                 saveChunkToContainer(container_buf_pointer, container_buf, 
@@ -337,139 +339,145 @@ void writeFileNaive(string path){
     log_file << "Finish write file" << endl;
 }
 
-// void writeFileDedupFirst(string path){
-//     int idf = open(path.c_str(), O_RDONLY, 0777);
-//     if(idf < 0){
-//         std::printf("open file error, id %d, %s\n", errno, strerror(errno));
-//         exit(-1);
-//     }
+void writeFileDedupFirst(string path){
+    log_file << "Start write file: " << path << ", method: Dedup First" << std::endl;
 
-//     unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
-//     struct SHA1FP tmp_sha1_fp;
-//     std::vector<std::string> file_recipe; // 保存这个文件所有块的指纹
+    int idf = open(path.c_str(), O_RDONLY, 0777);
+    if(idf < 0){
+        std::printf("open file error, id %d, %s\n", errno, strerror(errno));
+        exit(-1);
+    }
 
-//     // metadata entry(except FP)
-//     uint32_t container_index = getFilesNum(Config::getInstance().getContainersPath().c_str());
-//     uint32_t container_inner_offset = 0;
-//     uint32_t chunk_length = 0;
-//     uint16_t container_inner_index = 0;
+    unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
 
-//     unsigned char container_buf[CONTAINER_SIZE]={0};
-//     unsigned int container_buf_pointer = 0;
-//     uint32_t file_offset = 0;
-//     uint32_t n_read = 0;
+    std::vector<std::string> file_recipe; // 保存这个文件所有块的指纹
 
-//     struct ENTRY_VALUE entry_value;
+    // metadata entry(except FP)
+    uint32_t container_inner_offset = 0;
+    uint32_t chunk_length = 0;
+    uint16_t container_inner_index = 0;
 
-//     // 重删统计
-//     uint64_t dedup_chunks = 0;
-//     uint64_t dedup_size = 0;
-//     uint64_t sum_chunks = 0;
-//     uint64_t sum_size = 0;
-//     uint64_t hash_collision_sum = 0;
+    unsigned char container_buf[CONTAINER_SIZE]={0};
+    unsigned int container_buf_pointer = 0;
+    uint32_t file_offset = 0;
+    uint32_t n_read = 0;
 
-//     // delta重删
-//     uint32_t current_version = getFilesNum(Config::getInstance().getFileRecipesPath().c_str());
-//     uint32_t base_size = Config::getInstance().getBaseSize();
-//     uint32_t delta_num = Config::getInstance().getDeltaNum();
-//     uint32_t min_destination_base = current_version -  current_version % (base_size + delta_num);
-//     uint32_t max_destination_base = min_destination_base + base_size - 1;
-//     bool in_delta = (current_version % (base_size + delta_num)) > (base_size-1);
+    struct ENTRY_VALUE tmp_entry_value;
+    struct SHA1FP tmp_sha1_fp;
+
+    // 单个备份文件的统计信息
+    uint64_t dedup_chunks = 0;
+    uint64_t dedup_size = 0;
+    uint64_t sum_chunks = 0;
+    uint64_t sum_size = 0;
+    uint64_t hash_collision_sum = 0;
+    set<int> reference_containers;
+
+    uint32_t current_version = getFilesNum(Config::getInstance().getFileRecipesPath().c_str());
     
-//     // 普通分块重删，来一个块查寻一次，然后把non-duplicate chunk保存到container去
-//     for(;;){
-//         file_offset = 0;
+    for(;;){
+        file_offset = 0;
 
-//         n_read = read(idf, file_cache, FILE_CACHE);
+        n_read = read(idf, file_cache, FILE_CACHE);
 
-//         if(n_read <= 0){
-//             break;
-//         }
+        if(n_read <= 0){
+            break;
+        }
 
-//         while(file_offset < n_read){  
-//             // Chunk
-//             chunk_length = chunking(file_cache + file_offset, n_read - file_offset);
+        while(file_offset < n_read){  
+            // Chunk
+            chunk_length = chunking(file_cache + file_offset, n_read - file_offset);
             
-//             // Hash
-//             std::memset(&tmp_sha1_fp, 0, sizeof(struct SHA1FP));
-//             SHA1(file_cache + file_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+            // Hash
+            std::memset(&tmp_sha1_fp, 0, sizeof(struct SHA1FP));
+            SHA1(file_cache + file_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
 
-//             // Dedup
-//             LookupResult lookup_result;
-            
-//             if(dd)
-//                 lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp, in_delta); 
-//             else
-//                 lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp);
+            // Dedup
+            LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookupDedupFirst(tmp_sha1_fp, current_version);
 
-//             // 
-//             if(lookup_result == Unique){
-//                 // save chunk itself
-//                 saveChunkToContainer(container_buf_pointer, container_buf, 
-//                                     container_index, container_inner_offset, container_inner_index,
-//                                     chunk_length, file_offset, file_cache, (void*)&tmp_sha1_fp,
-//                                     Config::getInstance().getContainersPath().c_str());
+            if(!lookup_result.dup){
+                // save chunk itself
+                saveChunkToContainer(container_buf_pointer, container_buf, 
+                                    container_index, container_inner_offset, container_inner_index,
+                                    chunk_length, file_offset, file_cache, (void*)&tmp_sha1_fp,
+                                    Config::getInstance().getContainersPath().c_str());
                 
-//                 // save chunk metadata
-//                 entry_value.container_number = container_index;
-//                 entry_value.offset = container_inner_offset;
-//                 entry_value.chunk_length = chunk_length;
-//                 entry_value.container_inner_index = container_inner_index;
-//                 entry_value.version = current_version;
-//                 entry_value.ref_cnt = 1;
+                // save chunk metadata
+                tmp_entry_value.container_number = container_index;
+                tmp_entry_value.offset = container_inner_offset;
+                tmp_entry_value.chunk_length = chunk_length;
+                tmp_entry_value.container_inner_index = container_inner_index;
+                tmp_entry_value.version = current_version;
+                tmp_entry_value.ref_cnt = 1;
 
-//                 if(dd){
-//                     GlobalMetadataManagerPtr->addNewEntry(tmp_sha1_fp, entry_value, in_delta);
-//                 }else{
-//                     GlobalMetadataManagerPtr->addNewEntry(tmp_sha1_fp, entry_value);
-//                 }
+                GlobalMetadataManagerPtr->addNewEntry(tmp_sha1_fp, tmp_entry_value, current_version);
 
-//                 // rev
-//                 container_inner_offset += chunk_length;
-//                 container_buf_pointer += chunk_length;
-//                 container_inner_index ++;
-//                 rev_container_cnt ++;
+                // rev
+                container_inner_offset += chunk_length;
+                container_buf_pointer += chunk_length;
+                container_inner_index ++;
+                rev_container_cnt ++;
+                reference_containers.insert(container_index);
 
-//             }else if(lookup_result == Dedup){
-//                 dedup_chunks ++;
-//                 dedup_size += chunk_length;
-//             }
+            }else{
+                dedup_chunks ++;
+                dedup_size += chunk_length;
+                reference_containers.insert(lookup_result.container_index);
+            }
 
-//             // Insert fingerprint into file recipe
-//             file_recipe.push_back(std::string((char*)&tmp_sha1_fp, sizeof(struct SHA1FP)));
+            // Insert fingerprint into file recipe
+            file_recipe.push_back(std::string((char*)&tmp_sha1_fp, sizeof(struct SHA1FP)));
 
-//             // Statistic
-//             sum_chunks ++;
-//             sum_size += chunk_length;
+            // Statistic
+            sum_chunks ++;
+            sum_size += chunk_length;
 
-//             file_offset += chunk_length;
-//         }
-//     }
+            file_offset += chunk_length;
+        }
+    }
 
-//     //  flush最后一个container
-//     if(container_buf_pointer > 0)
-//         saveContainer(container_index, container_buf, 
-//                         container_buf_pointer, Config::getInstance().getContainersPath().c_str());
+    //  flush最后一个container
+    if(container_buf_pointer > 0)
+        saveContainer(container_index, container_buf, 
+                        container_buf_pointer, Config::getInstance().getContainersPath().c_str());
     
-//     // flush file_recipe
-//     saveFileRecipe(file_recipe, Config::getInstance().getFileRecipesPath().c_str());
-//     // std::printf("Sum chunks %" PRIu64 "\n",    sum_chunks);
-//     // std::printf("Sum size %" PRIu64 "\n",    sum_size);
-//     // std::printf("Unique chunks %" PRIu64 "\n",    sum_chunks - dedup_chunks);
-//     std::printf("%.2f%\n",     double(dedup_size) / double(sum_size) *100);
+    // flush file_recipe
+    saveFileRecipe(file_recipe, Config::getInstance().getFileRecipesPath().c_str());
+    
+    // #th statistic
+    log_file << "Sum chunks " << sum_chunks << endl;
+    log_file << "Sum size " << sum_size << endl;
+    log_file << "Dedup chunks " << dedup_chunks << endl;
+    log_file << "Dedup size " << dedup_size << endl;
 
-//     // update backup job
-//     bj.dedup_chunks += dedup_chunks;
-//     bj.dedup_size += dedup_size;
-//     bj.sum_chunks += sum_chunks;
-//     bj.sum_size += sum_size;
-//     bj.hash_collision_sum += hash_collision_sum;
-//     bj.file_num++;
+    float dedup_ratio_1 = double(dedup_size) / double(sum_size);
+    float dedup_ratio_2 = double(sum_size) / (double(sum_size) - double(dedup_size));
+    log_file << "Dedup ratio 1: " << dedup_ratio_1 << endl;
+    log_file << "Dedup ratio 2: " << dedup_ratio_2 << endl;
 
-//     // free 
-//     close(idf);
-//     free(file_cache);
-// }
+    float read_amplification = (double(reference_containers.size()) * CONTAINER_SIZE) / double(sum_size);
+    log_file << "Read amplification: " << read_amplification << endl;
+
+    // update backup job
+    bj.dedup_chunks += dedup_chunks;
+    bj.dedup_size += dedup_size;
+    bj.sum_chunks += sum_chunks;
+    bj.sum_size += sum_size;
+    bj.hash_collision_sum += hash_collision_sum;
+    bj.file_num++;
+
+    // total statistic
+    float actual_dratio_1 = double(bj.dedup_size) / double(bj.sum_size);
+    float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));
+    log_file << "Actual dedup ratio after backup 1: " << actual_dratio_1 << endl;
+    log_file << "Actual dedup ratio after backup 2: " << actual_dratio_2 << endl;
+    
+    // free 
+    close(idf);
+    free(file_cache);
+
+    log_file << "Finish write file" << endl;
+}
 
 // void writeFileDedupInterval(string path){
 //     int idf = open(path.c_str(), O_RDONLY, 0777);
@@ -654,8 +662,9 @@ void traverseFilesList(string files_list) {
             } 
 
         }else if(dt == DedupType::DedupFirst){
+            GlobalMetadataManagerPtr->reserveDedupFirstDeltaTable(files.size());
             for (const auto& path : files){
-                //writeFileDedupFirst(path);
+                writeFileDedupFirst(path);
             } 
 
         }else{

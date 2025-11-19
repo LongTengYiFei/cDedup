@@ -1,6 +1,6 @@
 {
   "Task": "write",
-  "dedupType": "naive",
+  "DedupType": "dedup_first",
   "delta_num": 9,
   "InputFilesList": "/home/cyf/cDedup/scripts/datasetsLNX.txt",
   "LogFilePath": "/home/cyf/cDedup/dedup.log",
