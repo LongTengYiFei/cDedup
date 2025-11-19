@@ -5,6 +5,12 @@
 #include"cJSON.h"
 using namespace std;
 
+enum DedupType{
+    Naive,
+    DedupInterval,
+    DedupFirst
+};
+
 enum TASK_TYPE{
     TASK_RESTORE,
     TASK_WRITE,
@@ -43,21 +49,20 @@ class Config{
         int getAvgChunkSize(){return this->avg_chunk_size;}
         int getNormalLevel(){return this->normal_level;}
         enum RESTORE_METHOD getRestoreMethod(){return this->rm;}
-
         string getFpDeltaDedupFolderPath(){return this->fp_DeltaDedup_folder_path;}
         string getFingerprintsFilePath(){return this->fingerprints_file_path;}
         string getFileRecipesPath(){return this->file_recipe_path;}        
         string getContainersPath(){return this->container_path;}     
         string getBaseContainersPath(){return this->base_container_path;}     
         string getDeltaContainersPath(){return this->delta_container_path;}     
-
-        bool isDeltaDedup(){return this->b_DeltaDedup;}
         int getBaseSize(){return this->base_size;}
         int getDeltaNum(){return this->delta_num;}
+        enum DedupType getDedupType(){return this->dedup_type;}
+        string getDedupLogPath(){return this->log_file_path;}   
 
         // Setters
         void setTask(char* s){this->tt = taskTypeTrans(s);}
-        void setInputFile(char* s){this->input_path = s;}
+        void setInputFilesList(char* s){this->input_path = s;}
         void setRestorePath(char* s){this->restore_path = s;}
         void setRestoreVersion(int n){this->restore_version = n;}
         void setChunkingMethod(char* s){this->cm = cmTypeTrans(s);}
@@ -73,10 +78,10 @@ class Config{
         void setContainersPath(char* s){this->container_path = s;}     
         void setBaseContainersPath(char* s){this->base_container_path = s;}
         void setDeltaContainersPath(char* s){this->delta_container_path = s;}
-
-        void setDeltaDedup(char* s){this->b_DeltaDedup = yesNoTrans(s);}
         void setBaseSize(int n){this->base_size = n;};
         void setDeltaNum(int n){this->delta_num = n;};
+        void setLogFilePath(char* s){this->log_file_path = s;}
+        void setDedupType(char* s){this->dedup_type = dedupTypeTrans(s);};
 
         // you know
         void parse_argument(int argc, char **argv)
@@ -105,8 +110,8 @@ class Config{
                 //1. User indicate configurations
                 if (strcmp(name, "Task") == 0) {
                     Config::getInstance().setTask(valuestring);
-                } else if (strcmp(name, "InputFile") == 0) {
-                    Config::getInstance().setInputFile(valuestring);
+                } else if (strcmp(name, "InputFilesList") == 0) {
+                    Config::getInstance().setInputFilesList(valuestring);
                 } else if (strcmp(name, "RestorePath") == 0) {
                     Config::getInstance().setRestorePath(valuestring);
                 } else if (strcmp(name, "RestoreVersion") == 0) {
@@ -123,27 +128,26 @@ class Config{
                     Config::getInstance().setNormal(val_int);
                 }else if (strcmp(name, "RestoreMethod") == 0) {
                     Config::getInstance().setRestoreMethod(valuestring);
-                }
-                //2. metadata configurations
-                else if (strcmp(name, "fingerprintsDeltaDedupFolder") == 0) {
+                }else if (strcmp(name, "fingerprintsDeltaDedupFolder") == 0) {
                     Config::getInstance().setFpDeltaDedupFolder(valuestring);
                 }else if (strcmp(name, "fingerprintsFilePath") == 0) {
                     Config::getInstance().setFingerprintsFilePath(valuestring);
-                } else if (strcmp(name, "fileRecipesPath") == 0) {
+                }else if (strcmp(name, "fileRecipesPath") == 0) {
                     Config::getInstance().setFileRecipesPath(valuestring);
-                } else if (strcmp(name, "containersPath") == 0) {
+                }else if (strcmp(name, "containersPath") == 0) {
                     Config::getInstance().setContainersPath(valuestring);
-                } else if (strcmp(name, "baseContainersPath") == 0) {
+                }else if (strcmp(name, "baseContainersPath") == 0) {
                     Config::getInstance().setBaseContainersPath(valuestring);
-                } else if (strcmp(name, "deltaContainersPath") == 0) {
+                }else if (strcmp(name, "deltaContainersPath") == 0) {
                     Config::getInstance().setDeltaContainersPath(valuestring);
-                }
-                else if (strcmp(name, "DeltaDedup") == 0) {
-                    Config::getInstance().setDeltaDedup(valuestring);
                 }else if (strcmp(name, "base_size") == 0) {
                     Config::getInstance().setBaseSize(val_int);
-                }else if (strcmp(name, "delta_num") == 0) {
+                }else if (strcmp(name, "DeltaNum") == 0) {
                     Config::getInstance().setDeltaNum(val_int);
+                }else if(strcmp(name, "LogFilePath") == 0){
+                    Config::getInstance().setLogFilePath(valuestring);
+                }else if(strcmp(name, "DedupType") == 0){
+                    Config::setDedupType(valuestring);
                 }
             }
         }
@@ -169,14 +173,28 @@ class Config{
         string base_container_path;
         string delta_container_path;
 
-        //打桩重删参数
-        bool b_DeltaDedup;
         int base_size;
+
+        string log_file_path;
+        enum DedupType dedup_type;
         int delta_num;
 
         Config() {
             avg_chunk_size = 4096;
             normal_level = 2;
+        }
+
+        enum DedupType dedupTypeTrans(char* s){
+            if(strcmp(s, "naive") == 0){
+                return Naive;
+            }else if (strcmp(s, "dedup_interval") == 0){
+                return DedupInterval;
+            }else if (strcmp(s, "dedup_first") == 0){
+                return DedupFirst; 
+            }else{
+                printf("Not support dedup type:%s\n", s);
+                exit(-1);
+            }
         }
 
         enum TASK_TYPE taskTypeTrans(char* s){

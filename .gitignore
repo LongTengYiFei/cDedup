@@ -148,3 +148,4 @@ utils/lz4-1.9.1/visual/VS2017/liblz4/liblz4.vcxproj
 utils/lz4-1.9.1/visual/VS2017/liblz4-dll/liblz4-dll.rc
 utils/lz4-1.9.1/visual/VS2017/liblz4-dll/liblz4-dll.vcxproj
 conf/writeExample.json
+dedup.log

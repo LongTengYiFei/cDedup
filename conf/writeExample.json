@@ -1,15 +1,15 @@
 {
   "Task": "write",
-  "InputFile": "/home/cyf/hikvision/ssd2/linuxVersion/",
+  "dedupType": "naive",
+  "delta_num": 9,
+  "InputFilesList": "/home/cyf/cDedup/scripts/datasetsLNX.txt",
+  "LogFilePath": "/home/cyf/cDedup/dedup.log",
   "ChunkingMethod": "cdc",
   "Size": 4096,
   "Normal": 2,
-  "MerkleTree": "no",
-  "containersPath": "/home/cyf/hikvision/hdd1/working/Containers",
-  "fileRecipesPath": "/home/cyf/hikvision/hdd1/working/metadata/FileRecipes",
-  "fingerprintsFilePath": "/home/cyf/hikvision/hdd1/working/metadata/fingerprints.meta",
-  "fingerprintsDeltaDedupFolder": "/home/cyf/hikvision/hdd1/working/metadata/fingerprintsDeltaDedup",
-  "DeltaDedup": "yes",
-  "base_size": 1,
-  "delta_num": 9
+  "containersPath": "/home/cyf/ssd1/working/Containers",
+  "fileRecipesPath": "/home/cyf/ssd1/working/metadata/FileRecipes",
+  "fingerprintsFilePath": "/home/cyf/ssd1/working/metadata/fingerprints.meta",
+  "fingerprintsDeltaDedupFolder": "/home/cyf/ssd1/working/metadata/fingerprintsDeltaDedup",
+  "base_size": 1
 }

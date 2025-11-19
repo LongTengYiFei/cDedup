@@ -170,29 +170,29 @@ int MetadataManager::save(){
 LookupResult MetadataManager::dedupLookup(SHA1FP sha1){
     auto dedupIter = this->fp_table_origin.find(sha1);
     if(dedupIter != this->fp_table_origin.end()){
-        return Dedup;
+        return LookupResult{true, dedupIter->second.container_number};
     }
 
     dedupIter = this->fp_table_added.find(sha1);
     if(dedupIter != this->fp_table_added.end()){
-        return Dedup;
+        return LookupResult{true, dedupIter->second.container_number};
     }
 
-    return Unique;
+    return LookupResult{false, 0};
 }
 
-LookupResult MetadataManager::dedupLookup(SHA1FP sha1, bool in_delta){
-    auto dedupIter = this->fp_table_base.find(sha1);
-    if(dedupIter != this->fp_table_base.end())
-        return Dedup;
+// LookupResult MetadataManager::dedupLookup(SHA1FP sha1, bool in_delta){
+//     auto dedupIter = this->fp_table_base.find(sha1);
+//     if(dedupIter != this->fp_table_base.end())
+//         return Dedup;
 
 
-    dedupIter = this->fp_table_delta.find(sha1);
-    if(dedupIter != this->fp_table_delta.end())
-        return Dedup;
+//     dedupIter = this->fp_table_delta.find(sha1);
+//     if(dedupIter != this->fp_table_delta.end())
+//         return Dedup;
     
-    return Unique;
-}
+//     return Unique;
+// }
 
 int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value){
     this->fp_table_added.emplace(sha1, value);

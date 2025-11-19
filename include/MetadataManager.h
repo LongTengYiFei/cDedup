@@ -6,9 +6,9 @@
 #include <unordered_map>
 #include "general.h"
 
-enum LookupResult {
-    Unique,
-    Dedup,
+struct LookupResult{
+    bool dup;
+    uint32_t container_index;
 };
 
 struct __attribute__ ((__packed__)) SHA1FP {
