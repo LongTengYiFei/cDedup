@@ -477,7 +477,9 @@ void writeFileDedupFirst(string path, int current_version){
     log_file << "Finish write file" << endl;
 }
 
-void writeFileDedupInterval(string path, int current_version){
+void writeFileDedupInterval(string path, int current_version, int interval){
+    log_file << "Start write file: " << path << ", method: Dedup Interval" << std::endl;
+
     int idf = open(path.c_str(), O_RDONLY, 0777);
     if(idf < 0){
         std::printf("open file error, id %d, %s\n", errno, strerror(errno));
@@ -508,6 +510,8 @@ void writeFileDedupInterval(string path, int current_version){
     uint64_t hash_collision_sum = 0;
     set<int> reference_containers;
 
+    int base_version = current_version / interval * interval;
+
     for(;;){
         file_offset = 0;
 
@@ -526,15 +530,10 @@ void writeFileDedupInterval(string path, int current_version){
             SHA1(file_cache + file_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
 
             // Dedup
-            LookupResult lookup_result;
-            
-            if(dd)
-                lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp, in_delta); 
-            else
-                lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp);
+            LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp, base_version, current_version); 
 
             // 
-            if(lookup_result == Unique){
+            if(!lookup_result.dup){
                 // save chunk itself
                 saveChunkToContainer(container_buf_pointer, container_buf, 
                                     container_index, container_inner_offset, container_inner_index,
@@ -548,12 +547,8 @@ void writeFileDedupInterval(string path, int current_version){
                 entry_value.container_inner_index = container_inner_index;
                 entry_value.version = current_version;
                 entry_value.ref_cnt = 1;
-
-                if(dd){
-                    GlobalMetadataManagerPtr->addNewEntry(tmp_sha1_fp, entry_value, in_delta);
-                }else{
-                    GlobalMetadataManagerPtr->addNewEntry(tmp_sha1_fp, entry_value);
-                }
+  
+                GlobalMetadataManagerPtr->addNewEntry(tmp_sha1_fp, entry_value, current_version);
 
                 // rev
                 container_inner_offset += chunk_length;
@@ -561,9 +556,13 @@ void writeFileDedupInterval(string path, int current_version){
                 container_inner_index ++;
                 rev_container_cnt ++;
 
-            }else if(lookup_result == Dedup){
+                reference_containers.insert(container_index);
+
+            }else{
                 dedup_chunks ++;
                 dedup_size += chunk_length;
+                reference_containers.insert(lookup_result.container_index);
+
             }
 
             // Insert fingerprint into file recipe
@@ -584,10 +583,20 @@ void writeFileDedupInterval(string path, int current_version){
     
     // flush file_recipe
     saveFileRecipe(file_recipe, Config::getInstance().getFileRecipesPath().c_str());
-    // std::printf("Sum chunks %" PRIu64 "\n",    sum_chunks);
-    // std::printf("Sum size %" PRIu64 "\n",    sum_size);
-    // std::printf("Unique chunks %" PRIu64 "\n",    sum_chunks - dedup_chunks);
-    std::printf("%.2f%\n",     double(dedup_size) / double(sum_size) *100);
+
+    // #th statistic
+    log_file << "Sum chunks " << sum_chunks << endl;
+    log_file << "Sum size " << sum_size << endl;
+    log_file << "Dedup chunks " << dedup_chunks << endl;
+    log_file << "Dedup size " << dedup_size << endl;
+
+    float dedup_ratio_1 = double(dedup_size) / double(sum_size);
+    float dedup_ratio_2 = double(sum_size) / (double(sum_size) - double(dedup_size));
+    log_file << "Dedup ratio 1: " << dedup_ratio_1 << endl;
+    log_file << "Dedup ratio 2: " << dedup_ratio_2 << endl;
+
+    float read_amplification = (double(reference_containers.size()) * CONTAINER_SIZE) / double(sum_size);
+    log_file << "Read amplification: " << read_amplification << endl;
 
     // update backup job
     bj.dedup_chunks += dedup_chunks;
@@ -597,8 +606,11 @@ void writeFileDedupInterval(string path, int current_version){
     bj.hash_collision_sum += hash_collision_sum;
     bj.file_num++;
 
-    if(dd)
-        GlobalMetadataManagerPtr->save(current_version, delta_num, min_destination_base);
+    // total statistic
+    float actual_dratio_1 = double(bj.dedup_size) / double(bj.sum_size);
+    float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));
+    log_file << "Actual dedup ratio after backup 1: " << actual_dratio_1 << endl;
+    log_file << "Actual dedup ratio after backup 2: " << actual_dratio_2 << endl;
 
     // free 
     close(idf);
@@ -653,16 +665,15 @@ void traverseFilesList(string files_list) {
                 writeFileDedupFirst(path, current_version++);
             } 
 
-        }
-        // else if(dt == DedupType::DedupInterval){
-        //     int interval = Config::getInstance().getInterval();
-        //     int current_version = 0;
-        //     for (const auto& path : files){
-        //         writeFileDedupInterval(path, current_version++, interval);
-        //     } 
+        }else if(dt == DedupType::DedupInterval){
+            GlobalMetadataManagerPtr->reserveDedupIntervalTable(files.size());
+            int current_version = 0;
+            int interval = Config::getInstance().getInterval();
+            for (const auto& path : files){
+                writeFileDedupInterval(path, current_version++, interval);
+            } 
 
-        // }
-        else{
+        }else{
             std::cerr << "Error: Not support dedup type" << std::endl;
         }
 

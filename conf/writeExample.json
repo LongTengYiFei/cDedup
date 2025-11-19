@@ -1,6 +1,6 @@
 {
   "Task": "write",
-  "DedupType": "dedup_first",
+  "DedupType": "dedup_interval",
   "Interval": 10,
   "InputFilesList": "/home/cyf/cDedup/scripts/datasetsLNX.txt",
   "LogFilePath": "/home/cyf/cDedup/dedup.log",
