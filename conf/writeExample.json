@@ -1,7 +1,7 @@
 {
   "Task": "write",
   "DedupType": "dedup_first",
-  "delta_num": 9,
+  "Interval": 10,
   "InputFilesList": "/home/cyf/cDedup/scripts/datasetsLNX.txt",
   "LogFilePath": "/home/cyf/cDedup/dedup.log",
   "ChunkingMethod": "cdc",

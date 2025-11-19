@@ -56,7 +56,7 @@ class Config{
         string getBaseContainersPath(){return this->base_container_path;}     
         string getDeltaContainersPath(){return this->delta_container_path;}     
         int getBaseSize(){return this->base_size;}
-        int getDeltaNum(){return this->delta_num;}
+        int getInterval(){return this->interval;}
         enum DedupType getDedupType(){return this->dedup_type;}
         string getDedupLogPath(){return this->log_file_path;}   
 
@@ -79,7 +79,7 @@ class Config{
         void setBaseContainersPath(char* s){this->base_container_path = s;}
         void setDeltaContainersPath(char* s){this->delta_container_path = s;}
         void setBaseSize(int n){this->base_size = n;};
-        void setDeltaNum(int n){this->delta_num = n;};
+        void setInterval(int n){this->interval = n;};
         void setLogFilePath(char* s){this->log_file_path = s;}
         void setDedupType(char* s){this->dedup_type = dedupTypeTrans(s);};
 
@@ -142,8 +142,8 @@ class Config{
                     Config::getInstance().setDeltaContainersPath(valuestring);
                 }else if (strcmp(name, "base_size") == 0) {
                     Config::getInstance().setBaseSize(val_int);
-                }else if (strcmp(name, "DeltaNum") == 0) {
-                    Config::getInstance().setDeltaNum(val_int);
+                }else if (strcmp(name, "Interval") == 0) {
+                    Config::getInstance().setInterval(val_int);
                 }else if(strcmp(name, "LogFilePath") == 0){
                     Config::getInstance().setLogFilePath(valuestring);
                 }else if(strcmp(name, "DedupType") == 0){
@@ -177,7 +177,7 @@ class Config{
 
         string log_file_path;
         enum DedupType dedup_type;
-        int delta_num;
+        int interval;
 
         Config() {
             avg_chunk_size = 4096;

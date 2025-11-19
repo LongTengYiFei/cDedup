@@ -9,51 +9,51 @@
 MetadataManager *GlobalMetadataManagerPtr;
 
 
-int MetadataManager::save(int current_version, int delta_size, int base_pos){
-    //printf("-----------------------Saving One File FP-index-----------------------\n");
-    std::string fp_name(Config::getInstance().getFpDeltaDedupFolderPath());
-    fp_name.append("/fp_");
-    fp_name.append(std::to_string(current_version));
-    if(current_version == base_pos)
-        fp_name.append("_base");
-    else
-        fp_name.append("_delta");
+// int MetadataManager::save(int current_version, int delta_size, int base_pos){
+//     //printf("-----------------------Saving One File FP-index-----------------------\n");
+//     std::string fp_name(Config::getInstance().getFpDeltaDedupFolderPath());
+//     fp_name.append("/fp_");
+//     fp_name.append(std::to_string(current_version));
+//     if(current_version == base_pos)
+//         fp_name.append("_base");
+//     else
+//         fp_name.append("_delta");
 
-    int fd = open(fp_name.c_str(), O_RDWR | O_CREAT, 0777);
-    if(fd < 0){
-        perror("Saving fp index error, the reason is ");
-        exit(-1);
-    }
+//     int fd = open(fp_name.c_str(), O_RDWR | O_CREAT, 0777);
+//     if(fd < 0){
+//         perror("Saving fp index error, the reason is ");
+//         exit(-1);
+//     }
 
-    int count = 0;
-    if(current_version == base_pos){
-        for(auto item : this->fp_table_base){
-            write(fd, (uint8_t*)&item.first, sizeof(SHA1FP));
-            write(fd, (uint8_t*)&item.second, sizeof(ENTRY_VALUE));
-            count++;
-        }
-    }else if(current_version <= (base_pos + delta_size)){
-        for(auto item : this->fp_table_delta){
-            int n = 0;
-            write(fd, (uint8_t*)&item.first, sizeof(SHA1FP));
-            write(fd, (uint8_t*)&item.second, sizeof(ENTRY_VALUE));
-            count++;
-        }
-    }else{
-        printf("Saving fp error\n");
-        exit(-1);
-    }
+//     int count = 0;
+//     if(current_version == base_pos){
+//         for(auto item : this->fp_table_base){
+//             write(fd, (uint8_t*)&item.first, sizeof(SHA1FP));
+//             write(fd, (uint8_t*)&item.second, sizeof(ENTRY_VALUE));
+//             count++;
+//         }
+//     }else if(current_version <= (base_pos + delta_size)){
+//         for(auto item : this->fp_table_delta){
+//             int n = 0;
+//             write(fd, (uint8_t*)&item.first, sizeof(SHA1FP));
+//             write(fd, (uint8_t*)&item.second, sizeof(ENTRY_VALUE));
+//             count++;
+//         }
+//     }else{
+//         printf("Saving fp error\n");
+//         exit(-1);
+//     }
 
-    if(current_version == (base_pos + delta_size)){
-        fp_table_base.clear(); 
-    }
+//     if(current_version == (base_pos + delta_size)){
+//         fp_table_base.clear(); 
+//     }
 
-    fp_table_delta.clear();
+//     fp_table_delta.clear();
 
-    //printf("total item %d\n", count);
-    close(fd);
-    return 0;
-}
+//     //printf("total item %d\n", count);
+//     close(fd);
+//     return 0;
+// }
 
 string MetadataManager::genFPname(int version, bool base){
     std::string fp_name(Config::getInstance().getFpDeltaDedupFolderPath());
@@ -69,7 +69,7 @@ string MetadataManager::genFPname(int version, bool base){
 int MetadataManager::load(int restore_version){
     // 如果这个版本是base，那么只需加载base的fp
     // 如果这个版本是delta，那么需要加载它前面一个base的fp和它自己的fp
-    int delta_num = Config::getInstance().getDeltaNum();
+    int delta_num = Config::getInstance().getInterval();
 
     // 因为现在默认base size是1，所以是delta_num + 1
     if(restore_version % (delta_num + 1) == 0){
@@ -181,38 +181,22 @@ LookupResult MetadataManager::dedupLookup(SHA1FP sha1){
     return LookupResult{false, 0};
 }
 
-LookupResult MetadataManager::dedupLookupDedupFirst(SHA1FP sha1, int version_number){
-    auto dedupIter = this->fp_table_first.find(sha1);
-    if(dedupIter != this->fp_table_first.end()){
+LookupResult MetadataManager::dedupLookup(SHA1FP sha1, int base, int delta){
+    auto dedupIter = this->fp_tables_interval[base].find(sha1);
+    if(dedupIter != this->fp_tables_interval[base].end())
         return LookupResult{true, dedupIter->second.container_number};
-    }
 
-    if(version_number != 0){
-        dedupIter = this->fp_tables_delta[version_number - 1].find(sha1);
-        if(dedupIter != this->fp_tables_delta[version_number - 1].end()){
-            return LookupResult{true, dedupIter->second.container_number};
-        }
-    }
-
+    dedupIter = this->fp_tables_interval[delta].find(sha1);
+    if(dedupIter != this->fp_tables_interval[delta].end())
+        return LookupResult{true, dedupIter->second.container_number};
+    
     return LookupResult{false, 0};
 }
 
-void MetadataManager::reserveDedupFirstDeltaTable(int n){
-    this->fp_tables_delta.resize(n);
+void MetadataManager::reserveDedupIntervalTable(int n){
+    this->fp_tables_interval.resize(n);
 }
 
-// LookupResult MetadataManager::dedupLookup(SHA1FP sha1, bool in_delta){
-//     auto dedupIter = this->fp_table_base.find(sha1);
-//     if(dedupIter != this->fp_table_base.end())
-//         return Dedup;
-
-
-//     dedupIter = this->fp_table_delta.find(sha1);
-//     if(dedupIter != this->fp_table_delta.end())
-//         return Dedup;
-    
-//     return Unique;
-// }
 
 int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value){
     this->fp_table_added.emplace(sha1, value);
@@ -220,11 +204,8 @@ int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value){
 }
 
 int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version){
-    if(version == 0){
-        this->fp_table_first.emplace(sha1, value);
-    }else{
-        this->fp_tables_delta[version - 1].emplace(sha1, value);
-    }
+    this->fp_tables_interval[version].emplace(sha1, value);
+    
     return 0;
 }
 

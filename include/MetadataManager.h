@@ -51,32 +51,29 @@ class MetadataManager {
 
         int save();
         int load();
-        int load(int restore_version);
+
         //暂不支持中断打桩写入，只支持目录批量一次性写入，所以没有对应的load函数
         int save(int, int, int);
-        LookupResult dedupLookup(SHA1FP sha1);
-        LookupResult dedupLookupDedupFirst(SHA1FP sha1, int );
+                int load(int restore_version);
+        LookupResult dedupLookup(SHA1FP sha1);  // dedup naive
+        LookupResult dedupLookup(SHA1FP sha1, int base, int delta); // dedup interval
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value);
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int);
         int addRefCnt(const SHA1FP sha1);
         ENTRY_VALUE getEntry(const SHA1FP sha1);
         std::string genFPname(int version, bool base);
         void loadDeltaDedupFp(std::string fp_name);
-        void reserveDedupFirstDeltaTable(int n); 
+        void reserveDedupIntervalTable(int n);
 
     private:
-        std::string metadata_file_path;
-        // FP-index used for normal deduplication
-        std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer> fp_table_origin;
-        std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer> fp_table_added;
-
-        // used for delta deduplication
-        std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer> fp_table_base;
-        std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer> fp_table_delta;
-
-        // dedup first
-        std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer> fp_table_first;
         using fpTable = std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer>;
-        std::vector<fpTable> fp_tables_delta;
+        std::string metadata_file_path;
+
+        // dedup naive
+        fpTable fp_table_origin;
+        fpTable fp_table_added;
+
+        // dedup first and interval
+        std::vector<fpTable> fp_tables_interval; // 同时包含base table和delta table
 };
 #endif
