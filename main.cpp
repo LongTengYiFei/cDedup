@@ -41,8 +41,6 @@ struct backup_job{
 
 namespace fs = std::experimental::filesystem;
 
-
-
 char* global_stat_path = "/home/cyf/cDedup/global_stat.json";
 string dedup_log_path;
 std::ofstream log_file;
@@ -55,6 +53,21 @@ uint32_t container_index = 0; // 控制当前写入的container index
 uint32_t rev_container_cnt = 0;
 unsigned char rev_container_buf[CONTAINER_SIZE]={0};
 unsigned char tmp_buf[CONTAINER_SIZE]={0};
+
+
+// interval observation
+struct interval_task{
+    int interval;
+    double actual_dr;
+    float avg_read_amplification;
+    uint64_t sum_size;
+    uint64_t dedup_size;
+    int total_container_reference;
+    int file_num;
+};
+vector<struct interval_task> interval_tasks;
+vector<int> intervals;
+vector<int> container_indice;
 
 uint32_t getFilesNum(const char* dirPath){
     int ans = 0;
@@ -489,8 +502,7 @@ void writeFileDedupInterval(string path, int current_version, int interval){
     unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
     std::vector<std::string> file_recipe; // 保存这个文件所有块的指纹
 
-    // metadata entry(except FP)
-    uint32_t container_index = getFilesNum(Config::getInstance().getContainersPath().c_str());
+    // metadata entry (except FP)
     uint32_t container_inner_offset = 0;
     uint32_t chunk_length = 0;
     uint16_t container_inner_index = 0;
@@ -611,6 +623,97 @@ void writeFileDedupInterval(string path, int current_version, int interval){
     float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));
     log_file << "Actual dedup ratio after backup 1: " << actual_dratio_1 << endl;
     log_file << "Actual dedup ratio after backup 2: " << actual_dratio_2 << endl;
+
+    // free 
+    close(idf);
+    free(file_cache);
+
+    log_file << "Finish write file" << endl;
+}
+
+/*
+    观察不同interval值，数据集最终的Actual dedup ratio和Read amplification；
+    不需要写容器；
+    不需要记录文件的recipe；
+*/
+void writeFileDedupIntervalObservation(string path, int current_version){
+    log_file << "Start write file: " << path << ", method: Dedup Interval Observation" << std::endl;
+
+    int idf = open(path.c_str(), O_RDONLY, 0777);
+    if(idf < 0){
+        std::printf("open file error, id %d, %s\n", errno, strerror(errno));
+        exit(-1);
+    }
+
+    uint32_t chunk_length = 0;
+    uint32_t file_offset = 0;
+    uint32_t n_read = 0;
+    struct ENTRY_VALUE entry_value;
+    struct SHA1FP tmp_sha1_fp;
+
+    vector<uint64_t> single_file_interval_dedup_size(interval_tasks.size(), 0);
+    vector<uint64_t> single_file_interval_sum_size(interval_tasks.size(), 0);
+    vector<set<int>> single_file_interval_reference_containers(interval_tasks.size());
+    vector<int> container_inner_offsets(interval_tasks.size(), 0);
+
+    unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
+    for(;;){
+        file_offset = 0;
+
+        n_read = read(idf, file_cache, FILE_CACHE);
+
+        if(n_read <= 0){
+            break;
+        }
+
+        while(file_offset < n_read){  
+            // Chunk
+            chunk_length = chunking(file_cache + file_offset, n_read - file_offset);
+            
+            // Hash
+            std::memset(&tmp_sha1_fp, 0, sizeof(struct SHA1FP));
+            SHA1(file_cache + file_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+
+            // Batch Query
+            for(int i=0; i<=interval_tasks.size()-1; i++){
+                int current_interval = interval_tasks[i].interval;
+                int base_version = current_version / current_interval * current_interval;
+                
+                LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp, base_version, current_version, current_interval); 
+                if(!lookup_result.dup){
+                    // 模拟chunk存储；
+                    if(container_inner_offsets[i] + chunk_length > CONTAINER_SIZE){
+                        container_indice[i] ++;
+                        container_inner_offsets[i] = 0;
+                        container_inner_offsets[i] += chunk_length;
+                    }else{
+                        container_inner_offsets[i] += chunk_length;
+                    }
+
+                    entry_value.container_number = container_indice[i];
+                    GlobalMetadataManagerPtr->addNewEntry(tmp_sha1_fp, entry_value, current_version, current_interval);
+                    single_file_interval_reference_containers[i].insert(container_indice[i]);
+
+                }else{
+                    single_file_interval_dedup_size[i] += chunk_length;
+                    single_file_interval_reference_containers[i].insert(lookup_result.container_index);
+
+                }
+
+                single_file_interval_sum_size[i] += chunk_length;
+            }
+            
+            file_offset += chunk_length;
+        }
+    }
+
+    for(int i=0; i<=interval_tasks.size()-1; i++){
+        interval_tasks[i].dedup_size += single_file_interval_dedup_size[i];
+        interval_tasks[i].sum_size += single_file_interval_sum_size[i];
+        interval_tasks[i].total_container_reference += single_file_interval_reference_containers[i].size();
+        interval_tasks[i].file_num ++;
+
+    }
 
     // free 
     close(idf);
@@ -780,6 +883,66 @@ int main(int argc, char** argv){
         
         // save metadata entry
         GlobalMetadataManagerPtr->save();
+
+    }else if(Config::getInstance().getTaskType() == TASK_INTERVAL_OBSERVATION){
+        // init interval task
+        interval_tasks.resize(20);
+        for(int i=5; i<=100; i+=5){
+            interval_tasks[i/5-1].interval = i;
+            interval_tasks[i/5-1].actual_dr = 0;
+            interval_tasks[i/5-1].avg_read_amplification = 0;
+            interval_tasks[i/5-1].sum_size = 0;
+            interval_tasks[i/5-1].dedup_size = 0;
+            interval_tasks[i/5-1].total_container_reference = 0;
+            interval_tasks[i/5-1].file_num = 0;
+
+
+            intervals.push_back(i);
+            container_indice.push_back(0);
+        }
+
+        // 
+        string files_list = Config::getInstance().getInputPath();
+        if (!fs::exists(files_list)) {
+            std::cerr << "Error: files list does not exist." << std::endl;
+            return 1;
+        }
+
+        if (fs::is_directory(files_list)) {
+            std::cerr << "Error: Input path is a directory." << std::endl;
+            exit(-1);
+        }else{
+            std::vector<string> files;
+            std::ifstream file(files_list);
+            if (file.is_open()) {
+                string line;
+                while (getline(file, line)) {
+                    files.push_back(line);
+                }
+                file.close();
+            }
+
+            for(int i=0; i<=interval_tasks.size()-1; i++){
+                GlobalMetadataManagerPtr->reserveDedupIntervalsTable(files.size(), (i+1)*5);
+            }
+
+            int current_version = 0;
+            for (const auto& path : files){
+                writeFileDedupIntervalObservation(path, current_version++);
+            } 
+
+            log_file << "-----------------------Dedup statics----------------------\n";
+            for(auto& task: interval_tasks){
+                task.avg_read_amplification = ((float)task.total_container_reference * CONTAINER_SIZE) / (float)task.sum_size;
+                log_file << "interval: " << task.interval << " avg read amplification: " << task.avg_read_amplification << "\n";
+            }
+
+            for(auto& task: interval_tasks){
+                task.actual_dr = double(task.dedup_size) / double(task.sum_size) * 100;
+                log_file << "interval: " << task.interval << " actual_dr: " << task.actual_dr << "\n";
+            }
+        }
+
     }
     // }else if(Config::getInstance().getTaskType() == TASK_RESTORE){
     //     // 如果写时使用DeltaDedup，那么恢复时参数也需要指定DeltaDedup

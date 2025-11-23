@@ -16,6 +16,7 @@ enum TASK_TYPE{
     TASK_WRITE,
     TASK_WRITE_PIPELINE,
     TASK_DELETE,
+    TASK_INTERVAL_OBSERVATION,
     NOT_CHOOSED
 };
 
@@ -82,6 +83,7 @@ class Config{
         void setInterval(int n){this->interval = n;};
         void setLogFilePath(char* s){this->log_file_path = s;}
         void setDedupType(char* s){this->dedup_type = dedupTypeTrans(s);};
+
 
         // you know
         void parse_argument(int argc, char **argv)
@@ -206,6 +208,8 @@ class Config{
                 return TASK_RESTORE;
             }else if (strcmp(s, "delete") == 0){
                 return TASK_DELETE;
+            }else if(strcmp(s, "interval_observation") == 0){
+                return TASK_INTERVAL_OBSERVATION;
             }else{
                 printf("Not support task type:%s\n", s);
                 exit(-1);

@@ -193,8 +193,24 @@ LookupResult MetadataManager::dedupLookup(SHA1FP sha1, int base, int delta){
     return LookupResult{false, 0};
 }
 
+LookupResult MetadataManager::dedupLookup(SHA1FP sha1, int base, int delta, int interval){
+    auto dedupIter = this->fp_tables_multi_interval[interval][base].find(sha1);
+    if(dedupIter != this->fp_tables_multi_interval[interval][base].end())
+        return LookupResult{true, dedupIter->second.container_number};
+
+    dedupIter = this->fp_tables_multi_interval[interval][delta].find(sha1);
+    if(dedupIter != this->fp_tables_multi_interval[interval][delta].end())
+        return LookupResult{true, dedupIter->second.container_number};
+    
+    return LookupResult{false, 0};
+}
+
 void MetadataManager::reserveDedupIntervalTable(int n){
     this->fp_tables_interval.resize(n);
+}
+
+void MetadataManager::reserveDedupIntervalsTable(int n, int interval){
+    this->fp_tables_multi_interval[interval].resize(n);
 }
 
 
@@ -205,6 +221,12 @@ int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value){
 
 int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version){
     this->fp_tables_interval[version].emplace(sha1, value);
+    
+    return 0;
+}
+
+int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version, int interval){
+    this->fp_tables_multi_interval[interval][version].emplace(sha1, value);
     
     return 0;
 }
