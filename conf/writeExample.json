@@ -1,9 +1,9 @@
 {
-  "Task": "interval_observation",
+  "Task": "window_observation",
   "DedupType": "dedup_interval",
   "Interval": 15,
-  "InputFilesList": "/home/cyf/cDedup/scripts/datasetsCHM.txt",
-  "LogFilePath": "/home/cyf/cDedup/dedupIntervalObervation2.log",
+  "InputFilesList": "/home/cyf/cDedup/scripts/datasetsLNX.txt",
+  "LogFilePath": "/home/cyf/cDedup/windowObservationLNX.log",
   "ChunkingMethod": "cdc",
   "Size": 4096,
   "Normal": 2,

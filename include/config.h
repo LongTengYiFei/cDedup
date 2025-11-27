@@ -17,6 +17,7 @@ enum TASK_TYPE{
     TASK_WRITE_PIPELINE,
     TASK_DELETE,
     TASK_INTERVAL_OBSERVATION,
+    TASK_WINDOW_OBSERVATION,
     NOT_CHOOSED
 };
 
@@ -210,6 +211,8 @@ class Config{
                 return TASK_DELETE;
             }else if(strcmp(s, "interval_observation") == 0){
                 return TASK_INTERVAL_OBSERVATION;
+            }else if(strcmp(s, "window_observation") == 0){
+                return TASK_WINDOW_OBSERVATION;
             }else{
                 printf("Not support task type:%s\n", s);
                 exit(-1);

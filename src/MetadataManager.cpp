@@ -193,26 +193,31 @@ LookupResult MetadataManager::dedupLookup(SHA1FP sha1, int base, int delta){
     return LookupResult{false, 0};
 }
 
-LookupResult MetadataManager::dedupLookup(SHA1FP sha1, int base, int delta, int interval){
-    auto dedupIter = this->fp_tables_multi_interval[interval][base].find(sha1);
-    if(dedupIter != this->fp_tables_multi_interval[interval][base].end())
+LookupResult MetadataManager::dedupLookup(SHA1FP sha1, int base, int delta, int group_index){
+    auto dedupIter = this->fp_tables_multi_group[group_index][base].find(sha1);
+    if(dedupIter != this->fp_tables_multi_group[group_index][base].end())
         return LookupResult{true, dedupIter->second.container_number};
 
-    dedupIter = this->fp_tables_multi_interval[interval][delta].find(sha1);
-    if(dedupIter != this->fp_tables_multi_interval[interval][delta].end())
+    dedupIter = this->fp_tables_multi_group[group_index][delta].find(sha1);
+    if(dedupIter != this->fp_tables_multi_group[group_index][delta].end())
         return LookupResult{true, dedupIter->second.container_number};
     
     return LookupResult{false, 0};
+}
+
+void MetadataManager::clearDedupIntervalTable(){
+    for(auto& table: this->fp_tables_interval){
+        table.clear();
+    }
 }
 
 void MetadataManager::reserveDedupIntervalTable(int n){
     this->fp_tables_interval.resize(n);
 }
 
-void MetadataManager::reserveDedupIntervalsTable(int n, int interval){
-    this->fp_tables_multi_interval[interval].resize(n);
+void MetadataManager::reserveDedupIntervalTablesByGroup(int n, int group_index){
+    this->fp_tables_multi_group[group_index].resize(n);
 }
-
 
 int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value){
     this->fp_table_added.emplace(sha1, value);
@@ -225,8 +230,8 @@ int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version){
     return 0;
 }
 
-int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version, int interval){
-    this->fp_tables_multi_interval[interval][version].emplace(sha1, value);
+int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version, int group_index){
+    this->fp_tables_multi_group[group_index][version].emplace(sha1, value);
     
     return 0;
 }

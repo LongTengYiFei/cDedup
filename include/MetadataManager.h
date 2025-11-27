@@ -52,22 +52,25 @@ class MetadataManager {
 
         int save();
         int load();
-
         //暂不支持中断打桩写入，只支持目录批量一次性写入，所以没有对应的load函数
         int save(int, int, int);
-                int load(int restore_version);
+        int load(int restore_version);
+
         LookupResult dedupLookup(SHA1FP sha1);
         LookupResult dedupLookup(SHA1FP sha1, int base, int delta);
-        LookupResult dedupLookup(SHA1FP sha1, int base, int delta, int interval);
+        LookupResult dedupLookup(SHA1FP sha1, int base, int delta, int group_index);
+
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value);
-        int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int);
-        int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int, int interval);
+        int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int version);
+        int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int version, int group_index);
+
         int addRefCnt(const SHA1FP sha1);
         ENTRY_VALUE getEntry(const SHA1FP sha1);
         std::string genFPname(int version, bool base);
         void loadDeltaDedupFp(std::string fp_name);
         void reserveDedupIntervalTable(int n);
-        void reserveDedupIntervalsTable(int n, int interval);
+        void reserveDedupIntervalTablesByGroup(int n, int group_index);
+        void clearDedupIntervalTable();
 
     private:
         using fpTable = std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer>;
@@ -81,10 +84,10 @@ class MetadataManager {
         std::vector<fpTable> fp_tables_interval; // 同时包含base table和delta table
 
         /*
-            interval -> table(base) table table .... table(base) table table
+            用法1：interval -> table(base) table table .... table(base) table table
+            用法2：window_start -> tables 
         */
-        std::map<int, std::vector<fpTable>> fp_tables_multi_interval;
-
+        std::map<int, std::vector<fpTable>> fp_tables_multi_group;
 
 };
 #endif

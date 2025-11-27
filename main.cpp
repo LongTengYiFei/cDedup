@@ -54,7 +54,6 @@ uint32_t rev_container_cnt = 0;
 unsigned char rev_container_buf[CONTAINER_SIZE]={0};
 unsigned char tmp_buf[CONTAINER_SIZE]={0};
 
-
 // interval observation
 struct interval_task{
     int interval;
@@ -68,6 +67,20 @@ struct interval_task{
 vector<struct interval_task> interval_tasks;
 vector<int> intervals;
 vector<int> container_indice;
+
+// window observation
+// 观察不同window，达到actual dr峰值的window内偏移；
+int window_size = 30;
+int window_num = 0;
+struct window_result{
+    int peak_actual_dr_offset;
+    float peak_actual_dr;
+    float current_actual_dr;
+    uint64_t dup_size;
+    uint64_t sum_size;
+    vector<string> files;
+};
+vector<window_result> window_results;
 
 uint32_t getFilesNum(const char* dirPath){
     int ans = 0;
@@ -722,6 +735,116 @@ void writeFileDedupIntervalObservation(string path, int current_version){
     log_file << "Finish write file" << endl;
 }
 
+/*
+    模拟；
+    不写container；
+    Dedup First;
+    写一个版本对命中的所有window计算；
+*/
+void writeFileDedupWindowObservation(string path, int current_version, int max_version){
+    log_file << "Start write file: " << path << ", method: Dedup Window Observation" << std::endl;
+
+    int idf = open(path.c_str(), O_RDONLY, 0777);
+    if(idf < 0){
+        std::printf("open file error, id %d, %s\n", errno, strerror(errno));
+        exit(-1);
+    }
+
+    /*
+        计算能框住current的所有window的start；
+    */
+    vector<int> window_starts;
+    int lower_bound = max(0, current_version - window_size + 1);
+    int upper_bound = min(current_version, max_version - window_size + 1);
+    assert(lower_bound <= upper_bound);
+    for (int start = lower_bound; start <= upper_bound; ++start) {
+        window_starts.push_back(start);
+    }
+    
+    // control
+    uint32_t chunk_length = 0;
+    uint32_t file_offset = 0;
+    uint32_t n_read = 0;
+    struct ENTRY_VALUE tmp_entry_value;
+    struct SHA1FP tmp_sha1_fp;
+
+    // control: multi container write 
+    vector<int> container_inner_offsets(window_starts.size(), 0);
+
+    // statistic
+    vector<uint64_t> multi_file_dedup_size(window_starts.size(), 0);
+    vector<uint64_t> multi_file_sum_size(window_starts.size(), 0);
+
+    unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
+    for(;;){
+        file_offset = 0;
+
+        n_read = read(idf, file_cache, FILE_CACHE);
+
+        if(n_read <= 0){
+            break;
+        }
+
+        while(file_offset < n_read){  
+            // Chunk
+            chunk_length = chunking(file_cache + file_offset, n_read - file_offset);
+            
+            // Hash
+            std::memset(&tmp_sha1_fp, 0, sizeof(struct SHA1FP));
+            SHA1(file_cache + file_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+
+            /*
+                multi windows
+                dedup first, base = 0;
+            */
+            for(int i=0; i<=window_starts.size()-1; i++){
+                int window_start = window_starts[i];
+                LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp, 0, current_version - window_start, window_start);
+                if(!lookup_result.dup){
+                // 模拟chunk存储
+                // 暂不统计读放大，直接忽略container index；
+                    if(container_inner_offsets[i] + chunk_length > CONTAINER_SIZE){
+                        container_inner_offsets[i] = 0;
+                        container_inner_offsets[i] += chunk_length;
+                    }else{
+                        container_inner_offsets[i] += chunk_length;
+                    }
+
+                    GlobalMetadataManagerPtr->addNewEntry(tmp_sha1_fp, tmp_entry_value, current_version - window_start, window_start);
+
+                }else{
+                    multi_file_dedup_size[i] += chunk_length;
+
+                }
+            
+                // statistic
+                multi_file_sum_size[i] += chunk_length; 
+            }
+            
+            // control
+            file_offset += chunk_length;
+        }
+    }
+
+    for(int i=0; i<=window_starts.size()-1; i++){
+        int window_index = window_starts[i];
+        // statistic
+        window_results[window_index].dup_size += multi_file_dedup_size[i];
+        window_results[window_index].sum_size += multi_file_sum_size[i];
+        window_results[window_index].current_actual_dr = (float)window_results[window_index].dup_size / (float)window_results[window_index].sum_size;
+        if(window_results[window_index].current_actual_dr > window_results[window_index].peak_actual_dr){
+            window_results[window_index].peak_actual_dr = window_results[window_index].current_actual_dr;
+            window_results[window_index].peak_actual_dr_offset = current_version - window_index;
+        }
+    }
+
+    // free 
+    close(idf);
+    free(file_cache);
+
+    log_file << "Finish write file" << endl;
+}
+
 std::vector<fs::path> traverseDirectory(const fs::path& directory) {
     try {
         std::vector<fs::path> files;
@@ -901,7 +1024,6 @@ int main(int argc, char** argv){
             container_indice.push_back(0);
         }
 
-        // 
         string files_list = Config::getInstance().getInputPath();
         if (!fs::exists(files_list)) {
             std::cerr << "Error: files list does not exist." << std::endl;
@@ -923,7 +1045,7 @@ int main(int argc, char** argv){
             }
 
             for(int i=0; i<=interval_tasks.size()-1; i++){
-                GlobalMetadataManagerPtr->reserveDedupIntervalsTable(files.size(), (i+1)*5);
+                GlobalMetadataManagerPtr->reserveDedupIntervalTablesByGroup(files.size(), (i+1)*5);
             }
 
             int current_version = 0;
@@ -941,6 +1063,55 @@ int main(int argc, char** argv){
                 task.actual_dr = double(task.dedup_size) / double(task.sum_size) * 100;
                 log_file << "interval: " << task.interval << " actual_dr: " << task.actual_dr << "\n";
             }
+        }
+
+    }else if(Config::getInstance().getTaskType() == TASK_WINDOW_OBSERVATION){
+        string files_list = Config::getInstance().getInputPath();
+        if (!fs::exists(files_list)) {
+            std::cerr << "Error: files list does not exist." << std::endl;
+            return 1;
+        }
+
+        std::vector<string> all_files;
+        if (fs::is_directory(files_list)) {
+            std::cerr << "Error: Input path is a directory." << std::endl;
+            exit(-1);
+        }else{
+            std::ifstream file(files_list);
+            if (file.is_open()) {
+                string line;
+                while (getline(file, line)) {
+                    all_files.push_back(line);
+                }
+                file.close();
+            }
+        }
+
+        // windows init
+        window_num = all_files.size() - window_size + 1;
+        window_results.resize(window_num);
+        for(int i=0; i<=window_results.size()-1; i++){
+            window_results[i].peak_actual_dr = 0;
+            window_results[i].peak_actual_dr_offset = 0;
+            window_results[i].files.assign(all_files.begin() + i,
+                                           all_files.begin() + i + window_size);
+        }
+
+        // init global metadata
+        for(int i=0; i<=window_num-1; i++){
+            int window_start = i;
+            GlobalMetadataManagerPtr->reserveDedupIntervalTablesByGroup(window_size, window_start);
+        }
+
+        for(int i=0; i<=all_files.size()-1; i++){
+            writeFileDedupWindowObservation(all_files[i], i, all_files.size()-1);
+        }
+
+        log_file << "-----------------------Dedup statics----------------------\n";
+        for(int i=0; i<=window_results.size()-1; i++){
+            log_file << "window " << i 
+                     << " peak_actual_dr: " << window_results[i].peak_actual_dr 
+                     << " peak_actual_dr_offset: " << window_results[i].peak_actual_dr_offset << "\n";
         }
 
     }
