@@ -70,8 +70,8 @@ vector<int> container_indice;
 
 // window observation
 // 观察不同window，达到actual dr峰值的window内偏移；
-int window_size = 30;
-int window_num = 0;
+const int window_size = 50;
+const vector<int> windows_start = {0, 50};
 struct window_result{
     int peak_actual_dr_offset;
     float peak_actual_dr;
@@ -79,8 +79,10 @@ struct window_result{
     uint64_t dup_size;
     uint64_t sum_size;
     vector<string> files;
+    vector<float> actual_drs;
+    vector<float> read_amplifications;
 };
-vector<window_result> window_results;
+map<int, window_result> window_results;
 
 uint32_t getFilesNum(const char* dirPath){
     int ans = 0;
@@ -741,24 +743,13 @@ void writeFileDedupIntervalObservation(string path, int current_version){
     Dedup First;
     写一个版本对命中的所有window计算；
 */
-void writeFileDedupWindowObservation(string path, int current_version, int max_version){
+void writeFileDedupWindowObservation(string path, int current_version){
     log_file << "Start write file: " << path << ", method: Dedup Window Observation" << std::endl;
 
     int idf = open(path.c_str(), O_RDONLY, 0777);
     if(idf < 0){
         std::printf("open file error, id %d, %s\n", errno, strerror(errno));
         exit(-1);
-    }
-
-    /*
-        计算能框住current的所有window的start；
-    */
-    vector<int> window_starts;
-    int lower_bound = max(0, current_version - window_size + 1);
-    int upper_bound = min(current_version, max_version - window_size + 1);
-    assert(lower_bound <= upper_bound);
-    for (int start = lower_bound; start <= upper_bound; ++start) {
-        window_starts.push_back(start);
     }
     
     // control
@@ -768,12 +759,21 @@ void writeFileDedupWindowObservation(string path, int current_version, int max_v
     struct ENTRY_VALUE tmp_entry_value;
     struct SHA1FP tmp_sha1_fp;
 
-    // control: multi container write 
-    vector<int> container_inner_offsets(window_starts.size(), 0);
+    // 我们是人为指定window，这里检查能框住这个版本的window
+    vector<int> windows_start_for_this_version;
+    for(int i=0; i<=windows_start.size()-1; i++){
+        if(windows_start[i] <= current_version && current_version < windows_start[i] + window_size){
+            windows_start_for_this_version.push_back(windows_start[i]);
+        }
+    }
+    int valid_window_num = windows_start_for_this_version.size();
 
     // statistic
-    vector<uint64_t> multi_file_dedup_size(window_starts.size(), 0);
-    vector<uint64_t> multi_file_sum_size(window_starts.size(), 0);
+    vector<uint64_t> multi_file_dedup_size(valid_window_num, 0);
+    vector<uint64_t> multi_file_sum_size(valid_window_num, 0);
+
+    // control: multi container write 
+    vector<int> container_inner_offsets(valid_window_num, 0);
 
     unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
     for(;;){
@@ -797,8 +797,8 @@ void writeFileDedupWindowObservation(string path, int current_version, int max_v
                 multi windows
                 dedup first, base = 0;
             */
-            for(int i=0; i<=window_starts.size()-1; i++){
-                int window_start = window_starts[i];
+            for(int i=0; i<=windows_start_for_this_version.size()-1; i++){
+                int window_start = windows_start_for_this_version[i];
                 LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp, 0, current_version - window_start, window_start);
                 if(!lookup_result.dup){
                 // 模拟chunk存储
@@ -826,12 +826,13 @@ void writeFileDedupWindowObservation(string path, int current_version, int max_v
         }
     }
 
-    for(int i=0; i<=window_starts.size()-1; i++){
-        int window_index = window_starts[i];
+    for(int i=0; i<=valid_window_num-1; i++){
+        int window_index = windows_start_for_this_version[i];
         // statistic
         window_results[window_index].dup_size += multi_file_dedup_size[i];
         window_results[window_index].sum_size += multi_file_sum_size[i];
         window_results[window_index].current_actual_dr = (float)window_results[window_index].dup_size / (float)window_results[window_index].sum_size;
+        window_results[window_index].actual_drs.push_back(window_results[window_index].current_actual_dr);
         if(window_results[window_index].current_actual_dr > window_results[window_index].peak_actual_dr){
             window_results[window_index].peak_actual_dr = window_results[window_index].current_actual_dr;
             window_results[window_index].peak_actual_dr_offset = current_version - window_index;
@@ -1088,32 +1089,37 @@ int main(int argc, char** argv){
         }
 
         // windows init
-        window_num = all_files.size() - window_size + 1;
-        window_results.resize(window_num);
-        for(int i=0; i<=window_results.size()-1; i++){
-            window_results[i].peak_actual_dr = 0;
-            window_results[i].peak_actual_dr_offset = 0;
-            window_results[i].files.assign(all_files.begin() + i,
+        for(int i=0; i<=windows_start.size()-1; i++){
+            window_results[windows_start[i]].peak_actual_dr = 0;
+            window_results[windows_start[i]].peak_actual_dr_offset = 0;
+            window_results[windows_start[i]].files.assign(all_files.begin() + i,
                                            all_files.begin() + i + window_size);
         }
 
         // init global metadata
-        for(int i=0; i<=window_num-1; i++){
-            int window_start = i;
-            GlobalMetadataManagerPtr->reserveDedupIntervalTablesByGroup(window_size, window_start);
+        for(int i=0; i<=windows_start.size()-1; i++){
+            GlobalMetadataManagerPtr->reserveDedupIntervalTablesByGroup(window_size, windows_start[i]);
         }
 
         for(int i=0; i<=all_files.size()-1; i++){
-            writeFileDedupWindowObservation(all_files[i], i, all_files.size()-1);
+            writeFileDedupWindowObservation(all_files[i], i);
         }
 
         log_file << "-----------------------Dedup statics----------------------\n";
-        for(int i=0; i<=window_results.size()-1; i++){
-            log_file << "window " << i 
-                     << " peak_actual_dr: " << window_results[i].peak_actual_dr 
-                     << " peak_actual_dr_offset: " << window_results[i].peak_actual_dr_offset << "\n";
+        for(auto & window_result: window_results){
+            log_file << "window " << window_result.first
+                     << " peak_actual_dr: " << window_result.second.peak_actual_dr
+                     << " peak_actual_dr_offset: " << window_result.second.peak_actual_dr_offset << "\n";
         }
 
+        // actual dr
+        for(auto & window_result: window_results){
+            log_file << "window " << window_result.first << " ";
+            for(int j=0; j<=window_result.second.actual_drs.size()-1; j++) 
+                log_file << window_result.second.actual_drs[j] << " ";
+            log_file << "\n";
+        }
+        
     }
     // }else if(Config::getInstance().getTaskType() == TASK_RESTORE){
     //     // 如果写时使用DeltaDedup，那么恢复时参数也需要指定DeltaDedup
