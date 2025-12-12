@@ -1125,20 +1125,13 @@ int main(int argc, char** argv){
                      << " peak_actual_dr_offset: " << window_result.second.peak_actual_dr_offset << "\n";
         }
 
-        // actual dr
+        // ADR and RA
         for(auto & window_result: window_results){
-            log_file << "window " << window_result.first << " ";
-            for(int j=0; j<=window_result.second.actual_drs.size()-1; j++) 
-                log_file << window_result.second.actual_drs[j] << " ";
-            log_file << "\n";
-        }
-
-        // read amplification
-        for(auto & window_result: window_results){
-            log_file << "window " << window_result.first << " ";
-            for(int j=0; j<=window_result.second.read_amplifications.size()-1; j++) 
-                log_file << window_result.second.read_amplifications[j] << " ";
-            log_file << "\n";
+            log_file << "window " << window_result.first << "\n";
+            for(int j=0; j<=window_result.second.actual_drs.size()-1; j++) {
+                log_file <<" ADR "<< window_result.second.actual_drs[j] << " ";
+                log_file <<" RA "<< window_result.second.read_amplifications[j] << "\n";
+            }
         }
 
     }
