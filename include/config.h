@@ -7,7 +7,7 @@ using namespace std;
 
 enum DedupType{
     Naive,
-    DedupInterval,
+    DedupFixedInterval,
     DedupFirst
 };
 
@@ -191,7 +191,7 @@ class Config{
             if(strcmp(s, "naive") == 0){
                 return Naive;
             }else if (strcmp(s, "dedup_interval") == 0){
-                return DedupInterval;
+                return DedupFixedInterval;
             }else if (strcmp(s, "dedup_first") == 0){
                 return DedupFirst; 
             }else{

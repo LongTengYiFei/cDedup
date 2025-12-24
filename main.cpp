@@ -53,6 +53,8 @@ uint32_t container_index = 0; // 控制当前写入的container index
 uint32_t rev_container_cnt = 0;
 unsigned char rev_container_buf[CONTAINER_SIZE]={0};
 unsigned char tmp_buf[CONTAINER_SIZE]={0};
+unsigned char* file_cache;
+unsigned char* container_buffer;
 
 // interval observation
 struct interval_task{
@@ -68,8 +70,13 @@ vector<struct interval_task> interval_tasks;
 vector<int> intervals;
 vector<int> container_indice;
 
-// window observation
-// 观察不同window，达到actual dr峰值的window内偏移；
+
+/*
+    window observation
+    观察不同window，达到actual dr峰值的window内偏移；
+    这里就默认把100个备份划分为两个窗口，每个窗口50个备份
+    并且这100个备份来自同一个source；
+*/
 const int window_size = 50;
 const vector<int> windows_start = {0, 50};
 struct window_result{
@@ -87,6 +94,7 @@ struct window_result{
     int current_container_index;
 };
 map<int, window_result> window_results;
+
 
 uint32_t getFilesNum(const char* dirPath){
     int ans = 0;
@@ -168,7 +176,7 @@ void saveContainer(int container_index, unsigned char* container_buf, unsigned i
     std::string container_name(containersPath);
     container_name.append("/container");
     container_name.append(std::to_string(container_index));
-    int fd = open(container_name.data(), O_RDWR | O_CREAT, 0777);
+    int fd = open(container_name.data(), O_RDWR | O_CREAT | O_DIRECT, 0777);
     if(write(fd, container_buf, len) != len){
         std::printf("saveContainer write error, id %d, %s\n", errno, strerror(errno));
         exit(-1);
@@ -182,19 +190,19 @@ void saveChunkToContainer(unsigned int& container_buf_pointer, unsigned char* co
                           const char* containers_path){
     // flush
     if(container_buf_pointer + chunk_length >= CONTAINER_SIZE){
-        saveContainer(container_index, container_buf, container_buf_pointer, containers_path);
+        saveContainer(container_index, container_buf, CONTAINER_SIZE, containers_path);
         std::memset(container_buf, 0, CONTAINER_SIZE);
         container_index++;
         container_inner_offset = 0;
         container_buf_pointer = 0;
         container_inner_index = 0;
 
-        rev_container_cnt = 0;
+        // rev_container_cnt = 0;
     }
 
     // container buffer
     memcpy(container_buf + container_buf_pointer, file_cache + file_offset, chunk_length);
-    memcpy(rev_container_buf + sizeof(SHA1FP)*rev_container_cnt, SHA_buf, sizeof(SHA1FP));
+    // memcpy(rev_container_buf + sizeof(SHA1FP)*rev_container_cnt, SHA_buf, sizeof(SHA1FP));
 
 }
 
@@ -239,20 +247,18 @@ void initChunkingAlgorithm(){
 void writeFileNaive(string path){
     log_file << "Start write file: " << path << ", method: naive" << std::endl;
 
-    int idf = open(path.c_str(), O_RDONLY);
+    int idf = open(path.c_str(), O_RDONLY | O_DIRECT);
     if(idf < 0){
         std::printf("open file error, id %d, %s\n", errno, strerror(errno));
         exit(-1);
     }
 
-    unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
     std::vector<std::string> file_recipe; // 保存这个文件所有块的指纹
 
     // metadata entry(except FP)
     uint32_t container_inner_offset = 0;
     uint32_t chunk_length = 0;
     uint16_t container_inner_index = 0;
-    unsigned char container_buf[CONTAINER_SIZE]={0};
     unsigned int container_buf_pointer = 0;
     uint32_t file_offset = 0;
     uint32_t n_read = 0;
@@ -271,7 +277,7 @@ void writeFileNaive(string path){
     for(;;){
         file_offset = 0;
 
-        n_read = read(idf, file_cache, FILE_CACHE);
+        n_read = read(idf, (void*)file_cache, FILE_CACHE);
 
         if(n_read <= 0){
             break;
@@ -289,7 +295,7 @@ void writeFileNaive(string path){
 
             if(!lookup_result.dup){
                 // save chunk itself
-                saveChunkToContainer(container_buf_pointer, container_buf, 
+                saveChunkToContainer(container_buf_pointer, container_buffer, 
                                     container_index, container_inner_offset, container_inner_index,
                                     chunk_length, file_offset, file_cache, (void*)&tmp_sha1_fp,
                                     Config::getInstance().getContainersPath().c_str());
@@ -328,12 +334,11 @@ void writeFileNaive(string path){
         }
     }
 
-    //  flush最后一个container
+    //  flush last container
     if(container_buf_pointer > 0)
-        saveContainer(container_index, container_buf, 
-                        container_buf_pointer, Config::getInstance().getContainersPath().c_str());
+        saveContainer(container_index, container_buffer, CONTAINER_SIZE, Config::getInstance().getContainersPath().c_str());
     
-    // flush file_recipe
+    // flush file recipe
     saveFileRecipe(file_recipe, Config::getInstance().getFileRecipesPath().c_str());
 
     // #th statistic
@@ -366,7 +371,6 @@ void writeFileNaive(string path){
     
     // free 
     close(idf);
-    free(file_cache);
 
     log_file << "Finish write file" << endl;
 }
@@ -509,7 +513,7 @@ void writeFileDedupFirst(string path, int current_version){
     log_file << "Finish write file" << endl;
 }
 
-void writeFileDedupInterval(string path, int current_version, int interval){
+void writeFileDedupFixedInterval(string path, int current_version, int interval){
     log_file << "Start write file: " << path << ", method: Dedup Interval" << std::endl;
 
     int idf = open(path.c_str(), O_RDONLY, 0777);
@@ -904,12 +908,12 @@ void traverseFilesList(string files_list) {
                 writeFileDedupFirst(path, current_version++);
             } 
 
-        }else if(dt == DedupType::DedupInterval){
+        }else if(dt == DedupType::DedupFixedInterval){
             GlobalMetadataManagerPtr->reserveDedupIntervalTable(files.size());
             int current_version = 0;
             int interval = Config::getInstance().getInterval();
             for (const auto& path : files){
-                writeFileDedupInterval(path, current_version++, interval);
+                writeFileDedupFixedInterval(path, current_version++, interval);
             } 
 
         }else{
@@ -933,7 +937,7 @@ void traverseWriteDirectory(const fs::path& directory) {
                 writeFileNaive(path);
             } 
 
-        }else if(dt == DedupType::DedupInterval){
+        }else if(dt == DedupType::DedupFixedInterval){
             int interval = Config::getInstance().getInterval();
             for (const auto& path : files){
                 //writeFileDedupInterval(path);
@@ -951,6 +955,17 @@ void traverseWriteDirectory(const fs::path& directory) {
     } catch (const std::exception& ex) {
         std::cerr << "Error: " << ex.what() << std::endl;
     }
+}
+
+void taskMemoryAllocation(){
+    // 写任务
+    if(Config::getInstance().getTaskType() == TASK_WRITE){
+        posix_memalign((void**)&file_cache, SECTOR_SIZE, FILE_CACHE);
+        posix_memalign((void**)&container_buffer, SECTOR_SIZE, CONTAINER_SIZE);
+    }
+    // }else if(Config::getInstance().getTaskType() == TASK_READ){
+        
+    // }
 }
 
 int main(int argc, char** argv){
@@ -976,6 +991,12 @@ int main(int argc, char** argv){
         std::cerr << "Error: Open log file failed" << std::endl;
         exit(-1);
     }
+
+    /*
+        写任务
+        初始化文件cache和container buffer
+    */
+    taskMemoryAllocation();
 
     // 不支持断续写入
     if(Config::getInstance().getTaskType() == TASK_WRITE){
