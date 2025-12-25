@@ -22,7 +22,8 @@ enum TASK_TYPE{
 };
 
 enum CHUNKING_METHOD{
-    CDC,
+    FASTCDC,
+    VECTORCDC,
     FSC,
 };
 
@@ -220,10 +221,12 @@ class Config{
         }
 
         enum CHUNKING_METHOD cmTypeTrans(char* s){
-            if(strcmp(s, "cdc") == 0){
-                return CDC;
-            }else if (strcmp(s, "fsc") == 0){
+            if(strcmp(s, "FastCDC") == 0){
+                return FASTCDC;
+            }else if (strcmp(s, "FSC") == 0){
                 return FSC;
+            }else if(strcmp(s, "VectorCDC") == 0){
+                return VECTORCDC;
             }else{
                 printf("Not support chunking method type:%s\n", s);
                 exit(-1);

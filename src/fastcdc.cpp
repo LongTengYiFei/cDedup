@@ -148,19 +148,19 @@ uint32_t MinSize_divide_by_2;
 
 // functions
 void fastCDC_init(int fas, int NC_level) {
-    unsigned char md5_digest[16];
-    uint8_t seed[SeedLength];
-    for (int i = 0; i < SymbolCount; i++) {
+    // unsigned char md5_digest[16];
+    // uint8_t seed[SeedLength];
+    // for (int i = 0; i < SymbolCount; i++) {
 
-        for (int j = 0; j < SeedLength; j++) {
-            seed[j] = i;
-        }
+    //     for (int j = 0; j < SeedLength; j++) {
+    //         seed[j] = i;
+    //     }
 
-        g_global_matrix[i] = 0;
-        MD5(seed, SeedLength, md5_digest);
-        memcpy(&(g_global_matrix[i]), md5_digest, 4);
-        g_global_matrix_left[i] = g_global_matrix[i] << 1;
-    }
+    //     g_global_matrix[i] = 0;
+    //     MD5(seed, SeedLength, md5_digest);
+    //     memcpy(&(g_global_matrix[i]), md5_digest, 4);
+    //     g_global_matrix_left[i] = g_global_matrix[i] << 1;
+    // }
 
     // 64 bit init
     for (int i = 0; i < SymbolCount; i++) {

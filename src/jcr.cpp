@@ -28,7 +28,7 @@ void show_backup_jcr(){
 	float throughput = (float)(jcr.data_size) / MB / ((float)(jcr.total_time)/1000000);
 	printf("--- --- jcr --- ---\n");
 	printf("Throughput %.2f MiB/s\n", throughput);
-    printf("Dedup Ratio %.2f%\n", double(jcr.data_size - jcr.unique_data_size) / double(jcr.data_size) *100);
+    printf("Dedup Ratio %.2f%%\n", double(jcr.data_size - jcr.unique_data_size) / double(jcr.data_size) *100);
 	printf("chunk_num %d\n", jcr.chunk_num);
 	printf("unique_chunk_num %d\n", jcr.unique_chunk_num);
 	printf("data_size %d\n", jcr.data_size);

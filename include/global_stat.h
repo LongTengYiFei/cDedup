@@ -20,7 +20,7 @@ public:
     uint64_t getPhysicalSize(){return this->physical_size;}
     double getDR(){return this->DR;}
 
-    void parse_arguments(char * json_path)
+    void parse_arguments(const char * json_path)
     {
         char source[2000 + 1];
         FILE *fp = fopen(json_path, "r");
@@ -61,7 +61,7 @@ public:
         printf("Init DR %.2f\n", GlobalStat::getInstance().getDR());
     }
 
-    void save_arguments(char * json_path)
+    void save_arguments(const char * json_path)
     {
         //Parsing路径和Saving路径务必一致
         char source[2000 + 1]={0};
@@ -85,19 +85,27 @@ public:
         cJSON_ReplaceItemInObject(config, "DeduplicationRatio", cJSON_CreateNumber(GlobalStat::getInstance().getDR()));
         
         char *cjValue = cJSON_Print(config);
-        ftruncate(fileno(fp), 0);
+
+        int ret = ftruncate(fileno(fp), 0);
+        if (ret < 0) {
+            perror("ftruncate error, the reason is ");
+            exit(-1);
+        }
+
         fseek(fp, 0, SEEK_SET);
-        int ret = fwrite((void*)cjValue, sizeof(char), strlen(cjValue), fp);
+
+        ret = fwrite((void*)cjValue, sizeof(char), strlen(cjValue), fp);
         if (ret < 0) {
             perror("write json file error!\n");
         }
+
         fclose(fp);
         free(cjValue);
         cJSON_Delete(config);
 
         //show
         printf("-------Saving New Global Arguments-------\n");
-        printf("Logical Size % " PRIu64 "\n", GlobalStat::getInstance().getLogicalSize());
+        printf("Logical Size %" PRIu64 "\n", GlobalStat::getInstance().getLogicalSize());
         printf("Physical Size %" PRIu64 "\n", GlobalStat::getInstance().getPhysicalSize());
         printf("DR %.2f\n", GlobalStat::getInstance().getDR());
     }

@@ -81,6 +81,8 @@ int MetadataManager::load(int restore_version){
         loadDeltaDedupFp(genFPname(base_pos, true));
         loadDeltaDedupFp(genFPname(restore_version, false));
     }
+
+    return 0;
 }
 
 void MetadataManager::loadDeltaDedupFp(std::string fp_name){
@@ -135,6 +137,8 @@ int MetadataManager::load(){
     close(fd);
     free(metadata_cache);
     printf("metadata table load %d items\n", entry_count);
+
+    return 0;
 }
 
 int MetadataManager::save(){
@@ -145,25 +149,50 @@ int MetadataManager::save(){
         exit(-1);
     }
     lseek(fd, 0, SEEK_SET);
-    ftruncate(fd,0);
+
+    int ret = ftruncate(fd,0);
+    if(ret < 0){
+        perror("ftruncate error, the reason is ");
+        exit(-1);
+    }
 
     int count = 0;
     
     for(auto item : this->fp_table_added){
-        write(fd, (uint8_t*)&item.first, sizeof(SHA1FP));
-        write(fd, (uint8_t*)&item.second, sizeof(ENTRY_VALUE));
+        int n = write(fd, (uint8_t*)&item.first, sizeof(SHA1FP));
+        if(n < 0){
+            perror("Saving fp index error, the reason is ");
+            exit(-1);
+        }
+
+        n = write(fd, (uint8_t*)&item.second, sizeof(ENTRY_VALUE));
+        if(n < 0){
+            perror("Saving fp index error, the reason is ");
+            exit(-1);
+        }
         count++;
     }
     printf("New added item %d\n", count);
 
     for(auto item : this->fp_table_origin){
-        write(fd, (uint8_t*)&item.first, sizeof(SHA1FP));
-        write(fd, (uint8_t*)&item.second, sizeof(ENTRY_VALUE));
+        int n = write(fd, (uint8_t*)&item.first, sizeof(SHA1FP));
+        if(n < 0){
+            perror("Saving fp index error, the reason is ");
+            exit(-1);
+        }
+
+        n = write(fd, (uint8_t*)&item.second, sizeof(ENTRY_VALUE));
+        if(n < 0){
+            perror("Saving fp index error, the reason is ");
+            exit(-1);
+        }
         count++;
     }
     printf("total item %d\n", count);
 
     close(fd);
+
+    return 0;
 }
 
 
@@ -244,6 +273,8 @@ int MetadataManager::addRefCnt(const SHA1FP sha1){
     if(dedupIter != this->fp_table_added.end())
         return ++dedupIter->second.ref_cnt;
     printf("addRefCnt: did not find\n");
+
+    return 0;
 }
 
 ENTRY_VALUE MetadataManager::getEntry(const SHA1FP sha1){
