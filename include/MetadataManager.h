@@ -6,6 +6,7 @@
 #include <vector>
 #include <map>
 #include <unordered_map>
+#include <queue>
 #include "general.h"
 
 struct LookupResult{
@@ -21,6 +22,12 @@ struct __attribute__ ((__packed__)) SHA1FP {
     void print() {
         printf("%lu:%d:%d:%d\n", fp1, fp2, fp3, fp4);
     }
+};
+
+struct CHUNK{
+    SHA1FP sha1;
+    uint32_t len;
+    unsigned char* data;
 };
 
 struct ENTRY_VALUE {
@@ -48,6 +55,7 @@ class MetadataManager {
     public:
         MetadataManager(const std::string& file_path) {
             this->metadata_file_path = file_path;
+
         }
 
         int save();
@@ -59,10 +67,20 @@ class MetadataManager {
         LookupResult dedupLookup(SHA1FP sha1);
         LookupResult dedupLookup(SHA1FP sha1, int base, int delta);
         LookupResult dedupLookup(SHA1FP sha1, int base, int delta, int group_index);
+        void dedupLookupADRE(const SHA1FP& chunk_fp, uint32_t chunk_len);
+        LookupResult dedupLookupDSFI(const SHA1FP& chunk_fp);
+        SHA1FP popSampleChunkFP();
+        uint32_t popSampleChunkLen();
+        void ADREFinal(int current_version_id);
+        void appendThDR(float thDR);
+        float getSampleRatio();
+        void ScodeInit();
+        void ScodeInitSingleFile();
 
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value);
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int version);
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int version, int group_index);
+        void addNewEntryDSFI(const SHA1FP& sha1, const ENTRY_VALUE& value);
 
         int addRefCnt(const SHA1FP sha1);
         ENTRY_VALUE getEntry(const SHA1FP sha1);
@@ -88,6 +106,41 @@ class MetadataManager {
             用法2：window_start -> tables 
         */
         std::map<int, std::vector<fpTable>> fp_tables_multi_group;
+
+        /*
+            ScoDe
+        */
+        // 每个base version对应自身以及附加delta version所有的thDR；
+        // 如果该base table closed，直接从map中删除
+        using BaseId = int;
+        using thDR = float;
+
+        struct SampleResult {
+            uint64_t sample_size;
+            uint64_t sample_dup_size;
+            float SDR; // thDR
+        };
+
+        struct BaseFPTable{
+            fpTable table;
+            std::vector<thDR> thDRs;
+        };
+
+        std::map<BaseId, SampleResult> sample_results;
+        std::map<BaseId, BaseFPTable> current_base_FP_tables; 
+        BaseId selected_base_version;
+        bool base_table_found;
+        bool isCurrentBase;
+        fpTable delta_table;
+        fpTable* current_fp_indexing_table;
+        std::queue<SHA1FP> sample_chunk_fps;
+        std::queue<uint32_t> sample_chunk_lens;
+        /*
+            SDR <>= ldr_ratio * LDR
+            ldr_ratio, sample_ratio 需做敏感性测试；
+        */
+        float ldr_ratio = 0.1; 
+        float sample_ratio  = 0.1;
 
 };
 #endif

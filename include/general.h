@@ -22,8 +22,10 @@
 #include <openssl/sha.h>
 
 #define MB (1024*1024)
-#define FILE_CACHE (256*1024*1024)
+#define BLOCK_SIZE (1*1024*1024)
 #define CONTAINER_SIZE (4*1024*1024)
+// 这里分配采样空间2GB，基于前提，不会有单个文件大于20GB，我们的采样率默认10%；
+#define SAMPLE_CACHE (2ULL*1024*1024*1024) 
 
 
 /* the buffer size for read phase */

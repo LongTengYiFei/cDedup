@@ -6,9 +6,10 @@
 using namespace std;
 
 enum DedupType{
-    Naive,
+    DedupNaive,
+    DedupFirst,
     DedupFixedInterval,
-    DedupFirst
+    DedupScode
 };
 
 enum TASK_TYPE{
@@ -190,7 +191,7 @@ class Config{
 
         enum DedupType dedupTypeTrans(char* s){
             if(strcmp(s, "naive") == 0){
-                return Naive;
+                return DedupNaive;
             }else if (strcmp(s, "dedup_interval") == 0){
                 return DedupFixedInterval;
             }else if (strcmp(s, "dedup_first") == 0){

@@ -89,13 +89,13 @@ void MetadataManager::loadDeltaDedupFp(std::string fp_name){
     printf("-----------------------Loading FP-index DeltaDedup-----------------------\n");
     printf("Loading index: %s\n", fp_name.c_str());
 
-    unsigned char* metadata_cache = (unsigned char*)malloc(FILE_CACHE);
+    unsigned char* metadata_cache = (unsigned char*)malloc(BLOCK_SIZE);
     int fd = open(fp_name.c_str(), O_RDONLY);
     if(fd < 0)
         printf("MetadataManager::load error\n");
     
     // 这里读一次，已经默认了fp的总大小不回超过FILE_CACHE
-    int n = read(fd, metadata_cache, FILE_CACHE);
+    int n = read(fd, metadata_cache, BLOCK_SIZE);
     int meta_size = sizeof(SHA1FP) + sizeof(ENTRY_VALUE);
     int entry_count = n/meta_size;
     SHA1FP tmp_fp;
@@ -117,11 +117,11 @@ int MetadataManager::load(){
     printf("-----------------------Loading FP-index-----------------------\n");
     printf("Loading index..\n");
 
-    unsigned char* metadata_cache = (unsigned char*)malloc(FILE_CACHE);
+    unsigned char* metadata_cache = (unsigned char*)malloc(BLOCK_SIZE);
     int fd = open(this->metadata_file_path.c_str(), O_RDONLY);
     if(fd < 0)
         printf("MetadataManager::load error\n");
-    int n = read(fd, metadata_cache, FILE_CACHE);
+    int n = read(fd, metadata_cache, BLOCK_SIZE);
     int meta_size = sizeof(SHA1FP) + sizeof(ENTRY_VALUE);
     int entry_count = n/meta_size;
     SHA1FP tmp_fp;
@@ -234,6 +234,115 @@ LookupResult MetadataManager::dedupLookup(SHA1FP sha1, int base, int delta, int 
     return LookupResult{false, 0};
 }
 
+void MetadataManager::dedupLookupADRE(const SHA1FP& chunk_fp, uint32_t chunk_len){
+    // dedup against all current base FP table
+    for(auto &x: this->current_base_FP_tables){
+        BaseId bid = x.first;
+        BaseFPTable btable = x.second;
+        if(btable.table.find(chunk_fp) != btable.table.end()){ // unique
+            sample_results[bid].sample_size++;
+        }else{ // dup
+            sample_results[bid].sample_size++;
+            sample_results[bid].sample_dup_size++;
+        }
+    }
+
+    // save
+    sample_chunk_fps.push(chunk_fp);
+    sample_chunk_lens.push(chunk_len);
+}
+
+LookupResult MetadataManager::dedupLookupDSFI(const SHA1FP& chunk_fp){
+    if(isCurrentBase){
+        // 该版本是 base version；
+        auto dedupIter = this->current_base_FP_tables[selected_base_version].table.find(chunk_fp);
+        if(dedupIter != this->current_base_FP_tables[selected_base_version].table.end())
+            return LookupResult{true, dedupIter->second.container_number};
+
+        return LookupResult{false, 0};
+
+    }else{
+        // 先查 base table
+        auto dedupIter = this->current_base_FP_tables[selected_base_version].table.find(chunk_fp);
+        if(dedupIter != this->current_base_FP_tables[selected_base_version].table.end())
+            return LookupResult{true, dedupIter->second.container_number};
+
+        // 再查唯一 delta table
+        dedupIter = this->delta_table.find(chunk_fp);
+        if(dedupIter != this->delta_table.end())
+            return LookupResult{true, dedupIter->second.container_number};
+        
+        return LookupResult{false, 0};
+    }
+}
+
+SHA1FP MetadataManager::popSampleChunkFP(){
+    SHA1FP ans = sample_chunk_fps.front();
+    sample_chunk_fps.pop();
+    return ans;
+}
+
+uint32_t MetadataManager::popSampleChunkLen(){
+    uint32_t ans = sample_chunk_lens.front();
+    sample_chunk_lens.pop();
+    return ans;
+}
+
+void MetadataManager::ADREFinal(int current_version_id){
+    // thDR of sample against each base FP table
+    selected_base_version = -1;
+    base_table_found = false;
+    for(auto &x: sample_results){
+        BaseId bid = x.first;
+        x.second.SDR = (float)x.second.sample_dup_size / (float)x.second.sample_size;
+        if(x.second.SDR >= ldr_ratio * current_base_FP_tables[bid].thDRs.back()){
+            base_table_found = true;
+            selected_base_version = bid;
+        }
+    }
+
+    if(base_table_found){
+        if(1){
+            // Case1:  base table found ADR N < ADR N-1
+            BaseFPTable new_table;
+            this->current_base_FP_tables[current_version_id] = new_table;
+            current_fp_indexing_table = &this->current_base_FP_tables[current_version_id].table;
+
+        }else{
+            // Case2:  base table found ADR N >= ADR N-1
+            delta_table.clear();
+            current_fp_indexing_table = &delta_table;
+        }
+
+    }else{
+        // Case3: base table not found
+        BaseFPTable new_table;
+        this->current_base_FP_tables[current_version_id] = new_table;
+        current_fp_indexing_table = &this->current_base_FP_tables[current_version_id].table;
+        selected_base_version = current_version_id; // 没found，所以就设置当前version为base；
+    }
+}
+
+void MetadataManager::appendThDR(float thDR){
+    current_base_FP_tables[selected_base_version].thDRs.push_back(thDR);
+}
+
+float MetadataManager::getSampleRatio(){
+    return sample_ratio;
+}
+
+void MetadataManager::ScodeInitSingleFile(){
+    ;
+}
+
+void MetadataManager::ScodeInit(){
+    /*
+        ScoDe
+        初始化第一个version
+    */
+    this->current_base_FP_tables[0] = BaseFPTable();
+}
+
 void MetadataManager::clearDedupIntervalTable(){
     for(auto& table: this->fp_tables_interval){
         table.clear();
@@ -263,6 +372,15 @@ int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version, in
     this->fp_tables_multi_group[group_index][version].emplace(sha1, value);
     
     return 0;
+}
+
+#define unlikely(x) __builtin_expect(!!(x), 0)
+void MetadataManager::addNewEntryDSFI(const SHA1FP& sha1, const ENTRY_VALUE& value){
+    if(unlikely(isCurrentBase)){
+        this->current_base_FP_tables[selected_base_version].table.emplace(sha1, value);
+    }else{
+        this->delta_table.emplace(sha1, value);
+    }
 }
 
 int MetadataManager::addRefCnt(const SHA1FP sha1){

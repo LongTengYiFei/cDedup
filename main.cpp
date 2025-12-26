@@ -9,6 +9,10 @@
 #include <cstring>
 #include <cerrno>
 #include <fstream>
+#include <vector>
+#include <algorithm>
+#include <random>
+#include <numeric> // for std::iota
 
 #include <unistd.h>
 #include <getopt.h>
@@ -26,6 +30,7 @@
 #include "utils/cJSON.h"
 #include "global_stat.h"
 #include "jcr.h"
+#include "ramcdc.h"
 
 #define MB (1024*1024)
 #define GB (1024*1024*1024)
@@ -41,7 +46,7 @@ struct backup_job{
 
 namespace fs = std::experimental::filesystem;
 
-char* global_stat_path = "/home/cyf/cDedup/global_stat.json";
+const char* global_stat_path = "/home/cyf/cDedup/global_stat.json";
 string dedup_log_path;
 std::ofstream log_file;
 extern MetadataManager *GlobalMetadataManagerPtr;
@@ -55,6 +60,7 @@ unsigned char rev_container_buf[CONTAINER_SIZE]={0};
 unsigned char tmp_buf[CONTAINER_SIZE]={0};
 unsigned char* file_cache;
 unsigned char* container_buffer;
+unsigned char* sample_cache;
 
 // interval observation
 struct interval_task{
@@ -95,20 +101,31 @@ struct window_result{
 };
 map<int, window_result> window_results;
 
-
-uint32_t getFilesNum(const char* dirPath){
-    int ans = 0;
-    DIR *dir = opendir(dirPath);
-    if(!dir){
-        std::printf("getFilesNum opendir error, id %d, %s, the dir is %s\n", 
-        errno, strerror(errno), dirPath);
-        closedir(dir);
+uint32_t getFilesNum(const char* dirPath) {
+    if (!dirPath) {
+        std::fprintf(stderr, "getFilesNum: dirPath is null\n");
         exit(-1);
     }
+
+    DIR* dir = opendir(dirPath);
+    if (!dir) {
+        std::fprintf(stderr, "getFilesNum opendir error, errno %d: %s, dir: %s\n",
+                     errno, strerror(errno), dirPath);
+        exit(-1);  // 或 return 0; 视错误处理策略而定
+        // ❌ 不要在这里调用 closedir(dir)!
+    }
+
+    int ans = 0;
     struct dirent* ptr;
-    while(readdir(dir)) ans++;
-    closedir(dir);
-    return ans-2;
+    while ((ptr = readdir(dir)) != nullptr) {
+        // 跳过 "." 和 ".."
+        if (strcmp(ptr->d_name, ".") != 0 && strcmp(ptr->d_name, "..") != 0) {
+            ans++;
+        }
+    }
+
+    closedir(dir);  // 此时 dir 一定非空
+    return static_cast<uint32_t>(ans);
 }
 
 void saveFileRecipe(std::vector<std::string> file_recipe, const char* fileRecipesPath){
@@ -215,7 +232,8 @@ void flushAssemblingBuffer(int fd, unsigned char* buf, int len){
 }
 
 void initChunkingAlgorithm(){
-    if(Config::getInstance().getChunkingMethod() == CDC){
+    enum CHUNKING_METHOD cm_type = Config::getInstance().getChunkingMethod();
+    if(cm_type == FASTCDC){
         int NC_level = Config::getInstance().getNormalLevel();
         int avg_size = Config::getInstance().getAvgChunkSize();
         fastCDC_init(avg_size, NC_level);
@@ -227,7 +245,7 @@ void initChunkingAlgorithm(){
         else{
             std::printf("Invalid NC level: %d\n", NC_level);
         }
-    }else if(Config::getInstance().getChunkingMethod() == FSC){
+    }else if(cm_type == FSC){
         int avg_size = Config::getInstance().getAvgChunkSize();
         if(avg_size == 4*1024){
             chunking = FSC_4;
@@ -241,6 +259,8 @@ void initChunkingAlgorithm(){
             std::printf("Invalid fixed size, the support size is 4 or 8 or 16\n");
             exit(-1);
         }
+    }else if(cm_type == VECTORCDC){
+        chunking = ramcdc_avx_512;
     }
 }
 
@@ -277,7 +297,7 @@ void writeFileNaive(string path){
     for(;;){
         file_offset = 0;
 
-        n_read = read(idf, (void*)file_cache, FILE_CACHE);
+        n_read = read(idf, (void*)file_cache, BLOCK_SIZE);
 
         if(n_read <= 0){
             break;
@@ -384,7 +404,7 @@ void writeFileDedupFirst(string path, int current_version){
         exit(-1);
     }
 
-    unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
+    unsigned char* file_cache = (unsigned char*)malloc(BLOCK_SIZE);
 
     std::vector<std::string> file_recipe; // 保存这个文件所有块的指纹
 
@@ -412,7 +432,7 @@ void writeFileDedupFirst(string path, int current_version){
     for(;;){
         file_offset = 0;
 
-        n_read = read(idf, file_cache, FILE_CACHE);
+        n_read = read(idf, file_cache, BLOCK_SIZE);
 
         if(n_read <= 0){
             break;
@@ -522,7 +542,7 @@ void writeFileDedupFixedInterval(string path, int current_version, int interval)
         exit(-1);
     }
 
-    unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
+    unsigned char* file_cache = (unsigned char*)malloc(BLOCK_SIZE);
     std::vector<std::string> file_recipe; // 保存这个文件所有块的指纹
 
     // metadata entry (except FP)
@@ -550,7 +570,7 @@ void writeFileDedupFixedInterval(string path, int current_version, int interval)
     for(;;){
         file_offset = 0;
 
-        n_read = read(idf, file_cache, FILE_CACHE);
+        n_read = read(idf, file_cache, BLOCK_SIZE);
 
         if(n_read <= 0){
             break;
@@ -654,6 +674,230 @@ void writeFileDedupFixedInterval(string path, int current_version, int interval)
     log_file << "Finish write file" << endl;
 }
 
+void writeFileDedupScode(string path, int current_version){
+    log_file << "Start write file: " << path << ", method: Dedup Scode" << std::endl;
+
+    int idf = open(path.c_str(), O_RDONLY | O_DIRECT, 0777);
+    if(idf < 0){
+        std::printf("open file error, id %d, %s\n", errno, strerror(errno));
+        exit(-1);
+    }
+
+    std::vector<std::string> file_recipe;
+
+    // container write control
+    uint32_t cache_offset = 0;
+    uint32_t n_read = 0;
+    uint32_t container_inner_offset = 0;
+    uint16_t container_inner_index = 0;
+    uint32_t container_buf_pointer = 0;
+    uint32_t chunk_length = 0;
+    struct ENTRY_VALUE tmp_entry_value;
+    struct SHA1FP tmp_sha1_fp;
+
+    // 当前文件重删统计
+    uint64_t dedup_chunks = 0;
+    uint64_t dedup_size = 0;
+    uint64_t sum_chunks = 0;
+    uint64_t sum_size = 0;
+    set<int> reference_containers;
+
+    GlobalMetadataManagerPtr->ScodeInitSingleFile();
+
+    /*
+        ADRE
+        1. sample
+        2. dedup against all current base table and find source
+        3. ADRE compute
+    */
+    /*
+        sample
+    */
+    uint64_t file_size = 0;
+    struct stat file_stat;
+    stat(path.c_str(), &file_stat);
+    file_size = file_stat.st_size;
+
+    uint64_t file_block_num = (file_size + BLOCK_SIZE - 1) / BLOCK_SIZE; // 向上取整
+    float sample_ratio = GlobalMetadataManagerPtr->getSampleRatio();
+    uint64_t sample_block_num = static_cast<uint64_t>(file_block_num * sample_ratio);
+    uint64_t sample_size = sample_block_num * BLOCK_SIZE;
+
+    if (sample_block_num == 0){
+        std::cerr << "Error: sample block num is 0" << std::endl;
+        exit(-1);
+    }
+
+    if (sample_block_num > file_block_num){
+        std::cerr << "Error: sample block num is larger than file block num" << std::endl;
+        exit(-1);
+    }
+
+    vector<uint64_t> all_blocks(file_block_num);
+    iota(all_blocks.begin(), all_blocks.end(), 0ULL); // 递增填充
+
+    vector<uint64_t> sampled_blocks;
+    sampled_blocks.reserve(sample_block_num);
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::sample(all_blocks.begin(), all_blocks.end(),
+                std::back_inserter(sampled_blocks),
+                sample_block_num, gen);
+
+    std::sort(sampled_blocks.begin(), sampled_blocks.end());
+
+    for (size_t i = 0; i < sampled_blocks.size(); ++i) {
+        uint64_t idx = sampled_blocks[i];       
+        off_t offset = idx * BLOCK_SIZE;
+        size_t read_size = (offset + BLOCK_SIZE > file_size) ? (file_size - offset) : BLOCK_SIZE;
+        ssize_t ret = pread(idf, sample_cache + i * BLOCK_SIZE, read_size, offset);
+        if (ret == -1) {
+            perror("sample pread failed"); 
+            break;
+        }
+    }
+
+    /*
+        ADRE sample dedup
+    */
+    uint32_t sample_offset = 0;
+    while(sample_offset < sample_size){  
+        // Chunk
+        chunk_length = chunking(sample_cache + sample_offset, sample_size - sample_offset);
+        
+        // Hash
+        SHA1(sample_cache + sample_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+        
+        // 2. Dedup against all current base FP table
+        GlobalMetadataManagerPtr->dedupLookupADRE(tmp_sha1_fp, chunk_length);
+    
+        // write control
+        sample_offset += chunk_length;
+    }
+    
+    /*
+        3. compute adr and decide which base table
+    */
+    GlobalMetadataManagerPtr->ADREFinal(current_version);
+
+    /*
+        不能先将sample写入，因为sample是随机采样，首先写入会造成碎片化；
+        sample 要一点一点随着剩余部分一起写入；
+    */
+    for(int block_index=0, sample_index=sampled_blocks.front(), i=0; 
+        block_index < file_block_num; 
+        block_index++){
+        unsigned char* cache;
+        bool is_sample = false;
+
+        if(sampled_blocks[i] == block_index){
+            cache = sample_cache + i * BLOCK_SIZE;
+            i++;
+            is_sample = true;
+        }else{
+            n_read = read(idf, (void*)file_cache, BLOCK_SIZE);
+            cache = file_cache;
+            is_sample = false;
+        }
+
+        cache_offset = 0;
+        while(cache_offset < n_read){  
+            if(is_sample){
+                chunk_length = GlobalMetadataManagerPtr->popSampleChunkLen();
+                SHA1FP sampe_chunk_fp = GlobalMetadataManagerPtr->popSampleChunkFP();
+                memcpy(&tmp_sha1_fp, cache + cache_offset, sizeof(SHA1FP));
+
+            }else{
+                chunk_length = chunking(cache + cache_offset, n_read - cache_offset);
+                SHA1(cache + cache_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+
+            }
+
+            // ScoDe Dynamic Scope Fingerprint Indexing
+            LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookupDSFI(tmp_sha1_fp);
+
+            if(!lookup_result.dup){
+                // save chunk itself
+                saveChunkToContainer(container_buf_pointer, container_buffer, 
+                                    container_index, container_inner_offset, container_inner_index,
+                                    chunk_length, cache_offset, file_cache, (void*)&tmp_sha1_fp,
+                                    Config::getInstance().getContainersPath().c_str());
+                
+                // save chunk metadata
+                tmp_entry_value.container_number = container_index;
+                tmp_entry_value.offset = container_inner_offset;
+                tmp_entry_value.chunk_length = chunk_length;
+                GlobalMetadataManagerPtr->addNewEntryDSFI(tmp_sha1_fp, tmp_entry_value);
+                reference_containers.insert(container_index);
+                
+                // control
+                container_inner_offset += chunk_length;
+                container_buf_pointer += chunk_length;
+                container_inner_index ++;
+
+            }else{
+                dedup_chunks ++;
+                dedup_size += chunk_length;
+                reference_containers.insert(lookup_result.container_index);
+
+            }
+
+            // Insert fingerprint into file recipe
+            file_recipe.push_back(std::string((char*)&tmp_sha1_fp, sizeof(struct SHA1FP)));
+
+            // statistic
+            sum_chunks ++;
+            sum_size += chunk_length;
+            
+            // write control
+            cache_offset += chunk_length;
+        }
+    }
+
+    //  flush last container
+    if(container_buf_pointer > 0)
+        saveContainer(container_index, container_buffer, CONTAINER_SIZE, Config::getInstance().getContainersPath().c_str());
+    
+    // flush file recipe
+    saveFileRecipe(file_recipe, Config::getInstance().getFileRecipesPath().c_str());
+
+    // #th statistic
+    log_file << "Sum chunks " << sum_chunks << endl;
+    log_file << "Sum size " << sum_size << endl;
+    log_file << "Dedup chunks " << dedup_chunks << endl;
+    log_file << "Dedup size " << dedup_size << endl;
+
+    float dedup_ratio_1 = double(dedup_size) / double(sum_size);
+    float dedup_ratio_2 = double(sum_size) / (double(sum_size) - double(dedup_size));
+    log_file << "Dedup ratio 1: " << dedup_ratio_1 << endl;
+    log_file << "Dedup ratio 2: " << dedup_ratio_2 << endl;
+
+    float read_amplification = (double(reference_containers.size()) * CONTAINER_SIZE) / double(sum_size);
+    log_file << "Read amplification: " << read_amplification << endl;
+
+    // 追加thDR
+    GlobalMetadataManagerPtr->appendThDR(dedup_ratio_1);    
+
+    // update backup job
+    bj.dedup_chunks += dedup_chunks;
+    bj.dedup_size += dedup_size;
+    bj.sum_chunks += sum_chunks;
+    bj.sum_size += sum_size;
+    bj.file_num++;
+
+    // total statistic
+    float actual_dratio_1 = double(bj.dedup_size) / double(bj.sum_size);
+    float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));
+    log_file << "Actual dedup ratio after backup 1: " << actual_dratio_1 << endl;
+    log_file << "Actual dedup ratio after backup 2: " << actual_dratio_2 << endl;
+    
+    // free 
+    close(idf);
+
+    log_file << "Finish write file" << endl;
+}
+
 /*
     观察不同interval值，数据集最终的Actual dedup ratio和Read amplification；
     不需要写容器；
@@ -679,11 +923,11 @@ void writeFileDedupIntervalObservation(string path, int current_version){
     vector<set<int>> single_file_interval_reference_containers(interval_tasks.size());
     vector<int> container_inner_offsets(interval_tasks.size(), 0);
 
-    unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
+    unsigned char* file_cache = (unsigned char*)malloc(BLOCK_SIZE);
     for(;;){
         file_offset = 0;
 
-        n_read = read(idf, file_cache, FILE_CACHE);
+        n_read = read(idf, file_cache, BLOCK_SIZE);
 
         if(n_read <= 0){
             break;
@@ -784,11 +1028,11 @@ void writeFileDedupWindowObservation(string path, int current_version){
     vector<int> multi_file_container_inner_offsets(valid_window_num, 0);
     vector<set<int>> multi_file_container_reference(valid_window_num);
 
-    unsigned char* file_cache = (unsigned char*)malloc(FILE_CACHE);
+    unsigned char* file_cache = (unsigned char*)malloc(BLOCK_SIZE);
     for(;;){
         file_offset = 0;
 
-        n_read = read(idf, file_cache, FILE_CACHE);
+        n_read = read(idf, file_cache, BLOCK_SIZE);
 
         if(n_read <= 0){
             break;
@@ -878,6 +1122,7 @@ std::vector<fs::path> traverseDirectory(const fs::path& directory) {
         return files;
     } catch (const std::exception& ex) {
         std::cerr << "Error: " << ex.what() << std::endl;
+        return std::vector<fs::path>();
     }
 }
 
@@ -896,7 +1141,7 @@ void traverseFilesList(string files_list) {
             file.close();
         }
 
-        if(dt == DedupType::Naive){
+        if(dt == DedupType::DedupNaive){
             for (const auto& path : files){
                 writeFileNaive(path);
             } 
@@ -916,6 +1161,13 @@ void traverseFilesList(string files_list) {
                 writeFileDedupFixedInterval(path, current_version++, interval);
             } 
 
+        }else if(dt == DedupType::DedupScode){
+            GlobalMetadataManagerPtr->ScodeInit();
+            int current_version = 0;
+            for (const auto& path : files){
+                writeFileDedupScode(path, current_version++);
+            } 
+
         }else{
             std::cerr << "Error: Not support dedup type" << std::endl;
         }
@@ -932,7 +1184,7 @@ void traverseWriteDirectory(const fs::path& directory) {
         std::vector<fs::path> files = traverseDirectory(directory);
         std::sort(files.begin(), files.end());
 
-        if(dt == DedupType::Naive){
+        if(dt == DedupType::DedupNaive){
             for (const auto& path : files){
                 writeFileNaive(path);
             } 
@@ -960,8 +1212,23 @@ void traverseWriteDirectory(const fs::path& directory) {
 void taskMemoryAllocation(){
     // 写任务
     if(Config::getInstance().getTaskType() == TASK_WRITE){
-        posix_memalign((void**)&file_cache, SECTOR_SIZE, FILE_CACHE);
-        posix_memalign((void**)&container_buffer, SECTOR_SIZE, CONTAINER_SIZE);
+        int ret = posix_memalign((void**)&file_cache, SECTOR_SIZE, BLOCK_SIZE);
+        if(ret != 0){
+            std::cerr << "Error: posix_memalign file cahce failed" << std::endl;
+            exit(-1);
+        }
+
+        ret = posix_memalign((void**)&sample_cache, SECTOR_SIZE, SAMPLE_CACHE);
+        if(ret != 0){
+            std::cerr << "Error: posix_memalign sample failed" << std::endl;
+            exit(-1);
+        }
+
+        ret = posix_memalign((void**)&container_buffer, SECTOR_SIZE, CONTAINER_SIZE);
+        if(ret != 0){
+            std::cerr << "Error: posix_memalign container failed" << std::endl;
+            exit(-1);
+        }
     }
     // }else if(Config::getInstance().getTaskType() == TASK_READ){
         
@@ -969,9 +1236,6 @@ void taskMemoryAllocation(){
 }
 
 int main(int argc, char** argv){
-    // 超级权限
-    setuid(0);
-
     // 参数解析
     Config::getInstance().parse_argument(argc, argv);
 
@@ -981,6 +1245,7 @@ int main(int argc, char** argv){
     GlobalMetadataManagerPtr = new MetadataManager(Config::getInstance().getFingerprintsFilePath().c_str());
     
     initChunkingAlgorithm();
+    ramcdc_init(Config::getInstance().getAvgChunkSize());
 
     /*
         打开日志文件，并且截断为0；
@@ -1025,14 +1290,14 @@ int main(int argc, char** argv){
         // 写文件 - 重删统计
         std::printf("-----------------------Dedup statics----------------------\n");
         std::printf("Hash collision num %" PRIu64 "\n",    bj.hash_collision_sum); // should be zero
-        std::printf("Sum chunks num % " PRIu64 "\n",       bj.sum_chunks);
+        std::printf("Sum chunks num %" PRIu64 "\n",       bj.sum_chunks);
         std::printf("Sum data size %" PRIu64 "\n",         bj.sum_size);
         std::printf("Dedup chunks num %" PRIu64 "\n",      bj.dedup_chunks);
         std::printf("Dedup data size %" PRIu64 "\n",       bj.dedup_size);
         std::printf("Average chunk size %" PRIu64 "\n",    bj.sum_size / bj.sum_chunks);
         std::printf("-----------------------statics----------------------\n");
         std::printf("Backup Throughput %.2f MiB/s\n",    throughput);
-        std::printf("Dedup Ratio %.2f%\n",     double(bj.dedup_size) / double(bj.sum_size) *100);
+        std::printf("Dedup Ratio %.2f%%\n",     double(bj.dedup_size) / double(bj.sum_size) *100);
 
         // 保存全局信息
         GlobalStat::getInstance().update(bj.sum_size, bj.sum_size - bj.dedup_size);
