@@ -238,12 +238,12 @@ void MetadataManager::dedupLookupADRE(const SHA1FP& chunk_fp, uint32_t chunk_len
     // dedup against all current base FP table
     for(auto &x: this->current_base_FP_tables){
         BaseId bid = x.first;
-        BaseFPTable btable = x.second;
-        if(btable.table.find(chunk_fp) != btable.table.end()){ // unique
-            sample_results[bid].sample_size++;
+        BaseFPTable& btable = x.second;
+        if(btable.table.find(chunk_fp) == btable.table.end()){ // unique
+            sample_results[bid].sample_size += chunk_len;
         }else{ // dup
-            sample_results[bid].sample_size++;
-            sample_results[bid].sample_dup_size++;
+            sample_results[bid].sample_size += chunk_len;
+            sample_results[bid].sample_dup_size += chunk_len;
         }
     }
 
@@ -289,6 +289,17 @@ uint32_t MetadataManager::popSampleChunkLen(){
 }
 
 void MetadataManager::ADREFinal(int current_version_id){
+
+    if(current_version_id == 0){
+        // 首个版本无需检测 sample
+        selected_base_version = current_version_id;
+        isCurrentBase = true;
+
+        BaseFPTable new_table;
+        this->current_base_FP_tables[current_version_id] = new_table;
+        return ;
+    }
+
     // thDR of sample against each base FP table
     selected_base_version = -1;
     base_table_found = false;
@@ -307,11 +318,13 @@ void MetadataManager::ADREFinal(int current_version_id){
             BaseFPTable new_table;
             this->current_base_FP_tables[current_version_id] = new_table;
             current_fp_indexing_table = &this->current_base_FP_tables[current_version_id].table;
+            isCurrentBase = true;
 
         }else{
             // Case2:  base table found ADR N >= ADR N-1
             delta_table.clear();
             current_fp_indexing_table = &delta_table;
+            isCurrentBase = false;
         }
 
     }else{
@@ -320,6 +333,7 @@ void MetadataManager::ADREFinal(int current_version_id){
         this->current_base_FP_tables[current_version_id] = new_table;
         current_fp_indexing_table = &this->current_base_FP_tables[current_version_id].table;
         selected_base_version = current_version_id; // 没found，所以就设置当前version为base；
+        isCurrentBase = true;
     }
 }
 
@@ -332,7 +346,15 @@ float MetadataManager::getSampleRatio(){
 }
 
 void MetadataManager::ScodeInitSingleFile(){
-    ;
+    if(!sample_chunk_fps.empty()){
+        sample_chunk_fps.pop();
+    }
+    
+    if(!sample_chunk_lens.empty()){
+        sample_chunk_lens.pop();
+    }
+
+    sample_results.clear();
 }
 
 void MetadataManager::ScodeInit(){

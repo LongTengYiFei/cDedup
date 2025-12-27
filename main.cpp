@@ -736,7 +736,8 @@ void writeFileDedupScode(string path, int current_version){
     vector<uint64_t> all_blocks(file_block_num);
     iota(all_blocks.begin(), all_blocks.end(), 0ULL); // 递增填充
 
-    vector<uint64_t> sampled_blocks;
+    vector<int64_t> sampled_blocks;
+    vector<uint32_t> sampled_blocks_size;
     sampled_blocks.reserve(sample_block_num);
 
     std::random_device rd;
@@ -756,6 +757,7 @@ void writeFileDedupScode(string path, int current_version){
             perror("sample pread failed"); 
             break;
         }
+        sampled_blocks_size.push_back(read_size);
     }
 
     /*
@@ -780,36 +782,48 @@ void writeFileDedupScode(string path, int current_version){
         3. compute adr and decide which base table
     */
     GlobalMetadataManagerPtr->ADREFinal(current_version);
+    
+
+    if(current_version == 0){
+        // 第一个版本无需sample
+        // 全填-1，这时，后续的写入就永远不会命中sample了 
+        std::fill(sampled_blocks.begin(), sampled_blocks.end(), -1);
+    }
 
     /*
         不能先将sample写入，因为sample是随机采样，首先写入会造成碎片化；
         sample 要一点一点随着剩余部分一起写入；
     */
-    for(int block_index=0, sample_index=sampled_blocks.front(), i=0; 
+    for(int block_index=0, i=0; 
         block_index < file_block_num; 
         block_index++){
         unsigned char* cache;
         bool is_sample = false;
 
+        uint32_t block_size_sample_or_file;
+
         if(sampled_blocks[i] == block_index){
             cache = sample_cache + i * BLOCK_SIZE;
-            i++;
+            block_size_sample_or_file = sampled_blocks_size[i];
             is_sample = true;
+            i++;
+
         }else{
             n_read = read(idf, (void*)file_cache, BLOCK_SIZE);
+            block_size_sample_or_file = n_read;
             cache = file_cache;
             is_sample = false;
         }
 
         cache_offset = 0;
-        while(cache_offset < n_read){  
+        while(cache_offset < block_size_sample_or_file){  
             if(is_sample){
                 chunk_length = GlobalMetadataManagerPtr->popSampleChunkLen();
                 SHA1FP sampe_chunk_fp = GlobalMetadataManagerPtr->popSampleChunkFP();
                 memcpy(&tmp_sha1_fp, cache + cache_offset, sizeof(SHA1FP));
 
             }else{
-                chunk_length = chunking(cache + cache_offset, n_read - cache_offset);
+                chunk_length = chunking(cache + cache_offset, block_size_sample_or_file - cache_offset);
                 SHA1(cache + cache_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
 
             }

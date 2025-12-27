@@ -190,12 +190,14 @@ class Config{
         }
 
         enum DedupType dedupTypeTrans(char* s){
-            if(strcmp(s, "naive") == 0){
+            if(strcmp(s, "DedupNaive") == 0){
                 return DedupNaive;
-            }else if (strcmp(s, "dedup_interval") == 0){
+            }else if (strcmp(s, "DedupFixedInterval") == 0){
                 return DedupFixedInterval;
-            }else if (strcmp(s, "dedup_first") == 0){
+            }else if (strcmp(s, "DedupFirst") == 0){
                 return DedupFirst; 
+            }else if(strcmp(s, "DedupScode") == 0){
+                return DedupScode;
             }else{
                 printf("Not support dedup type:%s\n", s);
                 exit(-1);
