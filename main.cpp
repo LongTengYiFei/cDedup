@@ -101,6 +101,16 @@ struct window_result{
 };
 map<int, window_result> window_results;
 
+// /*
+//     Estimation Observation
+// */
+// struct estimation_result{
+//     uint64_t sum_size;
+//     uint64_t dup_size;
+//     float dr;
+// };
+// vector<struct estimation_result> estimation_results;
+
 uint32_t getFilesNum(const char* dirPath) {
     if (!dirPath) {
         std::fprintf(stderr, "getFilesNum: dirPath is null\n");
@@ -261,6 +271,7 @@ void initChunkingAlgorithm(){
         }
     }else if(cm_type == VECTORCDC){
         chunking = ramcdc_avx_512;
+        ramcdc_init(Config::getInstance().getAvgChunkSize());
     }
 }
 
@@ -763,21 +774,23 @@ void writeFileDedupScode(string path, int current_version){
     /*
         ADRE sample dedup
     */
-    uint32_t sample_offset = 0;
-    while(sample_offset < sample_size){  
-        // Chunk
-        chunk_length = chunking(sample_cache + sample_offset, sample_size - sample_offset);
+    for(int i=0; i<=sampled_blocks_size.size()-1; i++){
+        uint32_t sample_block_offset = 0;
+        while(sample_block_offset < sampled_blocks_size[i]){  
+            // Chunk
+            chunk_length = chunking(sample_cache + sample_block_offset, sample_size - sample_block_offset);
+            
+            // Hash
+            SHA1(sample_cache + sample_block_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+            
+            // 2. Dedup against all current base FP table
+            GlobalMetadataManagerPtr->dedupLookupADRE(tmp_sha1_fp, chunk_length);
         
-        // Hash
-        SHA1(sample_cache + sample_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
-        
-        // 2. Dedup against all current base FP table
-        GlobalMetadataManagerPtr->dedupLookupADRE(tmp_sha1_fp, chunk_length);
-    
-        // write control
-        sample_offset += chunk_length;
+            // write control
+            sample_block_offset += chunk_length;
+        }
     }
-    
+
     /*
         3. compute adr and decide which base table
     */
@@ -1120,6 +1133,152 @@ void writeFileDedupWindowObservation(string path, int current_version){
     log_file << "Finish write file" << endl;
 }
 
+void writeFileDedupFirstEstimationDR(string path, int current_version){
+
+    int idf = open(path.c_str(), O_RDONLY | O_DIRECT);
+    if(idf < 0){
+        std::printf("open file error, id %d, %s\n", errno, strerror(errno));
+        exit(-1);
+    }
+
+    uint64_t file_size = 0;
+    struct stat file_stat;
+    stat(path.c_str(), &file_stat);
+    file_size = file_stat.st_size;
+
+    // 硬编码 sample ratio
+    // 第一个文件实际上不用统计DR；
+    struct ResultBySampleRatio{
+        float sample_ratio;
+        float thDR;
+        uint64_t sum_size;
+        uint64_t dup_size;
+    };
+    vector<ResultBySampleRatio> results_by_sample_ratio;
+    results_by_sample_ratio.push_back({.sample_ratio = 0.05, 0, 0, 0});
+    results_by_sample_ratio.push_back({.sample_ratio = 0.1, 0, 0, 0});
+    results_by_sample_ratio.push_back({.sample_ratio = 0.2, 0, 0, 0});
+
+    // control
+    uint32_t chunk_length = 0;
+    uint32_t file_cache_offset = 0;
+    uint32_t sample_cache_offset = 0;
+    uint32_t n_read = 0;
+    struct ENTRY_VALUE tmp_entry_value;
+    struct SHA1FP tmp_sha1_fp;
+
+    if(current_version == 0){ // self dedup
+        for(;;){
+            file_cache_offset = 0;
+
+            n_read = read(idf, file_cache, BLOCK_SIZE);
+
+            if(n_read <= 0){
+                break;
+            }
+
+            while(file_cache_offset < n_read){  
+                chunk_length = chunking(file_cache + file_cache_offset, n_read - file_cache_offset);
+                SHA1(file_cache + file_cache_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+                LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookupES(tmp_sha1_fp, current_version);
+                
+                if(!lookup_result.dup){
+                    GlobalMetadataManagerPtr->addNewEntryES(tmp_sha1_fp, tmp_entry_value, current_version);
+                }else{
+                    ;
+                }
+
+                file_cache_offset += chunk_length; 
+            }
+
+        }
+
+    }else{ 
+        for(auto& result : results_by_sample_ratio){
+            GlobalMetadataManagerPtr->ESClear();
+
+            // sampling
+            uint64_t file_block_num = (file_size + BLOCK_SIZE - 1) / BLOCK_SIZE; // 向上取整
+            float sample_ratio = result.sample_ratio;
+            uint64_t sample_block_num = static_cast<uint64_t>(file_block_num * sample_ratio);
+            uint64_t sample_size = sample_block_num * BLOCK_SIZE;
+
+            if (sample_block_num == 0){
+                std::cerr << "Error: sample block num is 0" << std::endl;
+                exit(-1);
+            }
+
+            if (sample_block_num > file_block_num){
+                std::cerr << "Error: sample block num is larger than file block num" << std::endl;
+                exit(-1);
+            }
+
+            vector<uint64_t> all_blocks(file_block_num);
+            iota(all_blocks.begin(), all_blocks.end(), 0ULL); // 递增填充
+
+            vector<int64_t> sampled_blocks;
+            vector<uint32_t> sampled_blocks_size;
+            sampled_blocks.reserve(sample_block_num);
+
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::sample(all_blocks.begin(), all_blocks.end(),
+                        std::back_inserter(sampled_blocks),
+                        sample_block_num, gen);
+
+            std::sort(sampled_blocks.begin(), sampled_blocks.end());
+
+            for (size_t i = 0; i < sampled_blocks.size(); ++i) {
+                uint64_t idx = sampled_blocks[i];       
+                off_t offset = idx * BLOCK_SIZE;
+                size_t read_size = (offset + BLOCK_SIZE > file_size) ? (file_size - offset) : BLOCK_SIZE;
+                ssize_t ret = pread(idf, sample_cache + i * BLOCK_SIZE, read_size, offset);
+                if (ret == -1) {
+                    perror("sample pread failed"); 
+                    break;
+                }
+                sampled_blocks_size.push_back(read_size);
+            }
+
+            // dedup (sample against first)
+            for(int i=0; i<=sampled_blocks_size.size()-1; i++){
+
+                uint32_t sample_block_offset = 0;
+                while(sample_block_offset < sampled_blocks_size[i]){  
+                    chunk_length = chunking(sample_cache + i*BLOCK_SIZE + sample_block_offset, sampled_blocks_size[i] - sample_block_offset);
+                    SHA1(sample_cache + i*BLOCK_SIZE + sample_block_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+                    LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookupES(tmp_sha1_fp, current_version);
+                    
+                    if(!lookup_result.dup){
+                        GlobalMetadataManagerPtr->addNewEntryES(tmp_sha1_fp, tmp_entry_value, current_version);
+                    }else{
+                        result.dup_size += chunk_length;   
+                    }
+
+                    result.sum_size += chunk_length;   
+                    sample_block_offset += chunk_length; 
+                }
+            }
+        }
+    }
+
+    // statistic
+    if(current_version != 0){
+        log_file << " version: "    << current_version;
+
+        for(auto& result : results_by_sample_ratio){
+            result.thDR = result.dup_size * 1.0 / result.sum_size;
+
+            log_file << " sample ratio: " << result.sample_ratio
+                     << " thDR: "         << result.thDR;
+        }
+
+        log_file << endl;
+    }
+
+    close(idf);
+}
+
 std::vector<fs::path> traverseDirectory(const fs::path& directory) {
     try {
         std::vector<fs::path> files;
@@ -1224,29 +1383,47 @@ void traverseWriteDirectory(const fs::path& directory) {
 }
 
 void taskMemoryAllocation(){
-    // 写任务
-    if(Config::getInstance().getTaskType() == TASK_WRITE){
-        int ret = posix_memalign((void**)&file_cache, SECTOR_SIZE, BLOCK_SIZE);
-        if(ret != 0){
-            std::cerr << "Error: posix_memalign file cahce failed" << std::endl;
-            exit(-1);
-        }
+    int ret = posix_memalign((void**)&file_cache, SECTOR_SIZE, BLOCK_SIZE);
+    if(ret != 0){
+        std::cerr << "Error: posix_memalign file cahce failed" << std::endl;
+        exit(-1);
+    }
 
-        ret = posix_memalign((void**)&sample_cache, SECTOR_SIZE, SAMPLE_CACHE);
-        if(ret != 0){
-            std::cerr << "Error: posix_memalign sample failed" << std::endl;
-            exit(-1);
-        }
+    ret = posix_memalign((void**)&sample_cache, SECTOR_SIZE, SAMPLE_CACHE);
+    if(ret != 0){
+        std::cerr << "Error: posix_memalign sample failed" << std::endl;
+        exit(-1);
+    }
 
-        ret = posix_memalign((void**)&container_buffer, SECTOR_SIZE, CONTAINER_SIZE);
-        if(ret != 0){
-            std::cerr << "Error: posix_memalign container failed" << std::endl;
-            exit(-1);
+    ret = posix_memalign((void**)&container_buffer, SECTOR_SIZE, CONTAINER_SIZE);
+    if(ret != 0){
+        std::cerr << "Error: posix_memalign container failed" << std::endl;
+        exit(-1);
+    }
+}
+
+std::vector<string> getAllFiles(string files_list_path){
+    if (!fs::exists(files_list_path)) {
+        std::cerr << "Error: files list path does not exist." << std::endl;
+        exit(-1);
+    }
+
+    std::vector<string> all_files;
+    if (fs::is_directory(files_list_path)) {
+        std::cerr << "Error: Input path is a directory." << std::endl;
+        exit(-1);
+    }else{
+        std::ifstream file(files_list_path);
+        if (file.is_open()) {
+            string line;
+            while (getline(file, line)) {
+                all_files.push_back(line);
+            }
+            file.close();
         }
     }
-    // }else if(Config::getInstance().getTaskType() == TASK_READ){
-        
-    // }
+
+    return all_files;
 }
 
 int main(int argc, char** argv){
@@ -1259,8 +1436,7 @@ int main(int argc, char** argv){
     GlobalMetadataManagerPtr = new MetadataManager(Config::getInstance().getFingerprintsFilePath().c_str());
     
     initChunkingAlgorithm();
-    ramcdc_init(Config::getInstance().getAvgChunkSize());
-
+    
     /*
         打开日志文件，并且截断为0；
     */
@@ -1379,26 +1555,7 @@ int main(int argc, char** argv){
         }
 
     }else if(Config::getInstance().getTaskType() == TASK_WINDOW_OBSERVATION){
-        string files_list = Config::getInstance().getInputPath();
-        if (!fs::exists(files_list)) {
-            std::cerr << "Error: files list does not exist." << std::endl;
-            return 1;
-        }
-
-        std::vector<string> all_files;
-        if (fs::is_directory(files_list)) {
-            std::cerr << "Error: Input path is a directory." << std::endl;
-            exit(-1);
-        }else{
-            std::ifstream file(files_list);
-            if (file.is_open()) {
-                string line;
-                while (getline(file, line)) {
-                    all_files.push_back(line);
-                }
-                file.close();
-            }
-        }
+        vector<string> all_files = getAllFiles(Config::getInstance().getInputPath());
 
         // windows init
         for(int i=0; i<=windows_start.size()-1; i++){
@@ -1434,6 +1591,13 @@ int main(int argc, char** argv){
             }
         }
 
+    }else if(Config::getInstance().getTaskType() == TASK_DEDUP_FIRST_ESTIMATION){
+        vector<string> all_files = getAllFiles(Config::getInstance().getInputPath());
+        int version_num = 10; // 硬编码只测试少量版本； 
+
+        for(int i=0; i<version_num ; i++){
+            writeFileDedupFirstEstimationDR(all_files[i], i);
+        }
     }
     // }else if(Config::getInstance().getTaskType() == TASK_RESTORE){
     //     // 如果写时使用DeltaDedup，那么恢复时参数也需要指定DeltaDedup

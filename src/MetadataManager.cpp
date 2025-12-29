@@ -234,6 +234,29 @@ LookupResult MetadataManager::dedupLookup(SHA1FP sha1, int base, int delta, int 
     return LookupResult{false, 0};
 }
 
+LookupResult MetadataManager::dedupLookupES(SHA1FP sha1, int version){
+    if(version == 0){
+        auto dedupIter = this->ES_base_table.find(sha1);
+        if(dedupIter != this->ES_base_table.end())
+            // 这里的container number没用；
+            return LookupResult{true, 0};
+    }else{
+        auto dedupIter = this->ES_base_table.find(sha1);
+        if(dedupIter != this->ES_base_table.end())
+            return LookupResult{true, 0};
+
+        dedupIter = this->ES_delta_table.find(sha1);
+        if(dedupIter != this->ES_delta_table.end())
+            return LookupResult{true, 0};
+    }
+
+    return LookupResult{false, 0};
+}
+
+void MetadataManager::ESClear(){
+    ES_delta_table.clear();
+}
+
 void MetadataManager::dedupLookupADRE(const SHA1FP& chunk_fp, uint32_t chunk_len){
     // dedup against all current base FP table
     for(auto &x: this->current_base_FP_tables){
@@ -243,8 +266,15 @@ void MetadataManager::dedupLookupADRE(const SHA1FP& chunk_fp, uint32_t chunk_len
             sample_results[bid].sample_size += chunk_len;
         }else{ // dup
             sample_results[bid].sample_size += chunk_len;
-            sample_results[bid].sample_dup_size += chunk_len;
+            sample_results[bid].sample_dup_size_against_base += chunk_len;
         }
+    }
+
+    // self dup
+    if(sample_self_table.find(chunk_fp) != sample_self_table.end()){ // self dup
+        sample_self_dup += chunk_len;
+    }else{
+        sample_self_table.insert({chunk_fp, ENTRY_VALUE()});
     }
 
     // save
@@ -305,7 +335,8 @@ void MetadataManager::ADREFinal(int current_version_id){
     base_table_found = false;
     for(auto &x: sample_results){
         BaseId bid = x.first;
-        x.second.SDR = (float)x.second.sample_dup_size / (float)x.second.sample_size;
+        x.second.SDR = ((float)x.second.sample_dup_size_against_base + (float)sample_self_dup)
+                                / (float)x.second.sample_size;
         if(x.second.SDR >= ldr_ratio * current_base_FP_tables[bid].thDRs.back()){
             base_table_found = true;
             selected_base_version = bid;
@@ -355,6 +386,8 @@ void MetadataManager::ScodeInitSingleFile(){
     }
 
     sample_results.clear();
+    sample_self_dup = 0;
+    sample_self_table.clear();
 }
 
 void MetadataManager::ScodeInit(){
@@ -393,6 +426,16 @@ int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version){
 int MetadataManager::addNewEntry(SHA1FP sha1, ENTRY_VALUE value, int version, int group_index){
     this->fp_tables_multi_group[group_index][version].emplace(sha1, value);
     
+    return 0;
+}
+
+int MetadataManager::addNewEntryES(SHA1FP sha1, ENTRY_VALUE value, int version){
+    if(version == 0){
+        this->ES_base_table.emplace(sha1, value);
+    }else{
+        this->ES_delta_table.emplace(sha1, value);
+    }
+
     return 0;
 }
 

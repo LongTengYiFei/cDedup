@@ -82,6 +82,11 @@ class MetadataManager {
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int version, int group_index);
         void addNewEntryDSFI(const SHA1FP& sha1, const ENTRY_VALUE& value);
 
+        // estimation sensitiy
+        LookupResult dedupLookupES(SHA1FP sha1, int version);
+        int addNewEntryES(const SHA1FP sha1, const ENTRY_VALUE value, int version);
+        void ESClear();
+
         int addRefCnt(const SHA1FP sha1);
         ENTRY_VALUE getEntry(const SHA1FP sha1);
         std::string genFPname(int version, bool base);
@@ -117,9 +122,11 @@ class MetadataManager {
 
         struct SampleResult {
             uint64_t sample_size;
-            uint64_t sample_dup_size;
+            uint64_t sample_dup_size_against_base;
             float SDR; // thDR
         };
+        uint64_t sample_self_dup;
+        fpTable sample_self_table;
 
         struct BaseFPTable{
             fpTable table;
@@ -140,7 +147,13 @@ class MetadataManager {
             ldr_ratio, sample_ratio 需做敏感性测试；
         */
         float ldr_ratio = 0.1; 
-        float sample_ratio  = 0.1;
+        float sample_ratio = 0.05;
+
+        /*
+            Estimation: sample ratio sensitivity
+        */
+       fpTable ES_base_table;
+       fpTable ES_delta_table;
 
 };
 #endif

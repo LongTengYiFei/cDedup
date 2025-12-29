@@ -19,6 +19,7 @@ enum TASK_TYPE{
     TASK_DELETE,
     TASK_INTERVAL_OBSERVATION,
     TASK_WINDOW_OBSERVATION,
+    TASK_DEDUP_FIRST_ESTIMATION,
     NOT_CHOOSED
 };
 
@@ -217,6 +218,8 @@ class Config{
                 return TASK_INTERVAL_OBSERVATION;
             }else if(strcmp(s, "window_observation") == 0){
                 return TASK_WINDOW_OBSERVATION;
+            }else if(strcmp(s, "dedup_first_estimation") == 0){
+               return TASK_DEDUP_FIRST_ESTIMATION; 
             }else{
                 printf("Not support task type:%s\n", s);
                 exit(-1);
