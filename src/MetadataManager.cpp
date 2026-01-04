@@ -337,7 +337,9 @@ void MetadataManager::ADREFinal(int current_version_id){
         BaseId bid = x.first;
         x.second.SDR = ((float)x.second.sample_dup_size_against_base + (float)sample_self_dup)
                                 / (float)x.second.sample_size;
-        if(x.second.SDR >= ldr_ratio * current_base_FP_tables[bid].thDRs.back()){
+        if(x.second.SDR >= (ldr_ratio * current_base_FP_tables[bid].thDRs.back()) &&
+            current_base_FP_tables[bid].thDRs.size() > 1)
+        {
             base_table_found = true;
             selected_base_version = bid;
         }

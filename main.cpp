@@ -757,7 +757,9 @@ void writeFileDedupScode(string path, int current_version){
                 std::back_inserter(sampled_blocks),
                 sample_block_num, gen);
 
+
     std::sort(sampled_blocks.begin(), sampled_blocks.end());
+    sampled_blocks.back() = file_block_num - 1; 
 
     for (size_t i = 0; i < sampled_blocks.size(); ++i) {
         uint64_t idx = sampled_blocks[i];       
@@ -777,11 +779,12 @@ void writeFileDedupScode(string path, int current_version){
     for(int i=0; i<=sampled_blocks_size.size()-1; i++){
         uint32_t sample_block_offset = 0;
         while(sample_block_offset < sampled_blocks_size[i]){  
+            unsigned char* p = sample_cache + i*BLOCK_SIZE + sample_block_offset;
             // Chunk
-            chunk_length = chunking(sample_cache + sample_block_offset, sample_size - sample_block_offset);
+            chunk_length = chunking(p, sampled_blocks_size[i] - sample_block_offset);
             
             // Hash
-            SHA1(sample_cache + sample_block_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+            SHA1(p, chunk_length, (uint8_t*)&tmp_sha1_fp);
             
             // 2. Dedup against all current base FP table
             GlobalMetadataManagerPtr->dedupLookupADRE(tmp_sha1_fp, chunk_length);
@@ -796,50 +799,16 @@ void writeFileDedupScode(string path, int current_version){
     */
     GlobalMetadataManagerPtr->ADREFinal(current_version);
     
+    for(int i=0; 
+        i < file_block_num; 
+        i++){
 
-    if(current_version == 0){
-        // 第一个版本无需sample
-        // 全填-1，这时，后续的写入就永远不会命中sample了 
-        std::fill(sampled_blocks.begin(), sampled_blocks.end(), -1);
-    }
-
-    /*
-        不能先将sample写入，因为sample是随机采样，首先写入会造成碎片化；
-        sample 要一点一点随着剩余部分一起写入；
-    */
-    for(int block_index=0, i=0; 
-        block_index < file_block_num; 
-        block_index++){
-        unsigned char* cache;
-        bool is_sample = false;
-
-        uint32_t block_size_sample_or_file;
-
-        if(sampled_blocks[i] == block_index){
-            cache = sample_cache + i * BLOCK_SIZE;
-            block_size_sample_or_file = sampled_blocks_size[i];
-            is_sample = true;
-            i++;
-
-        }else{
-            n_read = read(idf, (void*)file_cache, BLOCK_SIZE);
-            block_size_sample_or_file = n_read;
-            cache = file_cache;
-            is_sample = false;
-        }
+        n_read = read(idf, (void*)file_cache, BLOCK_SIZE);
 
         cache_offset = 0;
-        while(cache_offset < block_size_sample_or_file){  
-            if(is_sample){
-                chunk_length = GlobalMetadataManagerPtr->popSampleChunkLen();
-                SHA1FP sampe_chunk_fp = GlobalMetadataManagerPtr->popSampleChunkFP();
-                memcpy(&tmp_sha1_fp, cache + cache_offset, sizeof(SHA1FP));
-
-            }else{
-                chunk_length = chunking(cache + cache_offset, block_size_sample_or_file - cache_offset);
-                SHA1(cache + cache_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
-
-            }
+        while(cache_offset < n_read){  
+            chunk_length = chunking(file_cache + cache_offset, n_read - cache_offset);
+            SHA1(file_cache + cache_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
 
             // ScoDe Dynamic Scope Fingerprint Indexing
             LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookupDSFI(tmp_sha1_fp);

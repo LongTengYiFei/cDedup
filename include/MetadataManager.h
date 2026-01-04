@@ -146,8 +146,8 @@ class MetadataManager {
             SDR <>= ldr_ratio * LDR
             ldr_ratio, sample_ratio 需做敏感性测试；
         */
-        float ldr_ratio = 0.1; 
-        float sample_ratio = 0.05;
+        float ldr_ratio = 0.5; 
+        float sample_ratio = 0.1;
 
         /*
             Estimation: sample ratio sensitivity
