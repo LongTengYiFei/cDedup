@@ -318,8 +318,9 @@ uint32_t MetadataManager::popSampleChunkLen(){
     return ans;
 }
 
-void MetadataManager::ADREFinal(int current_version_id){
-
+void MetadataManager::ADREFinal(int current_version_id, 
+                                uint64_t system_all_size, uint64_t system_dedup_size,  uint64_t file_size){
+    // first case
     if(current_version_id == 0){
         // 首个版本无需检测 sample
         selected_base_version = current_version_id;
@@ -333,24 +334,33 @@ void MetadataManager::ADREFinal(int current_version_id){
     // thDR of sample against each base FP table
     selected_base_version = -1;
     base_table_found = false;
+    float estimated_thDR_N = 0;
+    float estimated_ADR_N = 0;
+    float ADR_N_sub_1 = 0;
     for(auto &x: sample_results){
         BaseId bid = x.first;
-        x.second.SDR = ((float)x.second.sample_dup_size_against_base + (float)sample_self_dup)
-                                / (float)x.second.sample_size;
-        if(x.second.SDR >= (ldr_ratio * current_base_FP_tables[bid].thDRs.back()) &&
-            current_base_FP_tables[bid].thDRs.size() > 1)
-        {
+        x.second.SDR = ((float)x.second.sample_dup_size_against_base + (float)sample_self_dup) / (float)x.second.sample_size;
+        
+        if(x.second.SDR >= (ldr_ratio * current_base_FP_tables[bid].thDRs.back())){   
+            // control
             base_table_found = true;
-            selected_base_version = bid;
+            selected_base_version = bid; // set base, may be change later;
+
+            // compute
+            estimated_thDR_N = x.second.SDR;
+            estimated_ADR_N = (float)(file_size * estimated_thDR_N + system_dedup_size) / (float)(system_all_size + file_size);
+            ADR_N_sub_1 = this->current_base_FP_tables[selected_base_version].ADRs.back();
         }
     }
 
+    // case judge
     if(base_table_found){
-        if(1){
+        if(estimated_ADR_N < ADR_N_sub_1){
             // Case1:  base table found ADR N < ADR N-1
             BaseFPTable new_table;
             this->current_base_FP_tables[current_version_id] = new_table;
             current_fp_indexing_table = &this->current_base_FP_tables[current_version_id].table;
+            selected_base_version = current_version_id; // change base to new base
             isCurrentBase = true;
 
         }else{
@@ -368,10 +378,15 @@ void MetadataManager::ADREFinal(int current_version_id){
         selected_base_version = current_version_id; // 没found，所以就设置当前version为base；
         isCurrentBase = true;
     }
+    return ;
 }
 
 void MetadataManager::appendThDR(float thDR){
     current_base_FP_tables[selected_base_version].thDRs.push_back(thDR);
+}
+
+void MetadataManager::appendADR(float ADR){
+    current_base_FP_tables[selected_base_version].ADRs.push_back(ADR);
 }
 
 float MetadataManager::getSampleRatio(){

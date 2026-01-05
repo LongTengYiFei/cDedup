@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <random>
 #include <numeric> // for std::iota
+#include <iomanip> // 确保包含此头文件
 
 #include <unistd.h>
 #include <getopt.h>
@@ -215,9 +216,11 @@ void saveChunkToContainer(unsigned int& container_buf_pointer, unsigned char* co
                           uint32_t& container_index, uint32_t& container_inner_offset, uint16_t& container_inner_index,
                           int chunk_length, int file_offset, unsigned char* file_cache, void* SHA_buf,
                           const char* containers_path){
+    
     // flush
     if(container_buf_pointer + chunk_length >= CONTAINER_SIZE){
         saveContainer(container_index, container_buf, CONTAINER_SIZE, containers_path);
+
         std::memset(container_buf, 0, CONTAINER_SIZE);
         container_index++;
         container_inner_offset = 0;
@@ -713,6 +716,8 @@ void writeFileDedupScode(string path, int current_version){
     uint64_t sum_size = 0;
     set<int> reference_containers;
 
+    bool container_fake_io = Config::getInstance().getContainerFakeIO();
+
     GlobalMetadataManagerPtr->ScodeInitSingleFile();
 
     /*
@@ -797,11 +802,9 @@ void writeFileDedupScode(string path, int current_version){
     /*
         3. compute adr and decide which base table
     */
-    GlobalMetadataManagerPtr->ADREFinal(current_version);
+    GlobalMetadataManagerPtr->ADREFinal(current_version, bj.sum_size, bj.dedup_size, file_size);
     
-    for(int i=0; 
-        i < file_block_num; 
-        i++){
+    for(int i=0; i < file_block_num; i++){
 
         n_read = read(idf, (void*)file_cache, BLOCK_SIZE);
 
@@ -814,24 +817,35 @@ void writeFileDedupScode(string path, int current_version){
             LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookupDSFI(tmp_sha1_fp);
 
             if(!lookup_result.dup){
-                // save chunk itself
-                saveChunkToContainer(container_buf_pointer, container_buffer, 
-                                    container_index, container_inner_offset, container_inner_index,
-                                    chunk_length, cache_offset, file_cache, (void*)&tmp_sha1_fp,
-                                    Config::getInstance().getContainersPath().c_str());
-                
+                if(container_fake_io){
+                    if(container_inner_offset + chunk_length > CONTAINER_SIZE){
+                        container_index ++;
+                        container_inner_offset = 0;
+                        container_inner_offset += chunk_length;
+                    }else{
+                        container_inner_offset += chunk_length;
+                    }
+
+                }else{
+                    // save chunk itself
+                    saveChunkToContainer(container_buf_pointer, container_buffer, 
+                                        container_index, container_inner_offset, container_inner_index,
+                                        chunk_length, cache_offset, file_cache, (void*)&tmp_sha1_fp,
+                                        Config::getInstance().getContainersPath().c_str());
+                    
+                    // conatainer write control
+                    container_inner_offset += chunk_length;
+                    container_buf_pointer += chunk_length;
+                    container_inner_index ++;
+                }
+
                 // save chunk metadata
                 tmp_entry_value.container_number = container_index;
                 tmp_entry_value.offset = container_inner_offset;
                 tmp_entry_value.chunk_length = chunk_length;
                 GlobalMetadataManagerPtr->addNewEntryDSFI(tmp_sha1_fp, tmp_entry_value);
                 reference_containers.insert(container_index);
-                
-                // control
-                container_inner_offset += chunk_length;
-                container_buf_pointer += chunk_length;
-                container_inner_index ++;
-
+            
             }else{
                 dedup_chunks ++;
                 dedup_size += chunk_length;
@@ -859,21 +873,28 @@ void writeFileDedupScode(string path, int current_version){
     saveFileRecipe(file_recipe, Config::getInstance().getFileRecipesPath().c_str());
 
     // #th statistic
-    log_file << "Sum chunks " << sum_chunks << endl;
-    log_file << "Sum size " << sum_size << endl;
-    log_file << "Dedup chunks " << dedup_chunks << endl;
-    log_file << "Dedup size " << dedup_size << endl;
 
+
+    log_file << "Sum size "
+        << sum_size << " B "
+        << std::fixed << std::setprecision(2)
+        << (float)sum_size / (1024 * 1024) << " MB "
+        << (float)sum_size / (1024 * 1024 * 1024) << " GB" << std::endl;
+    
+    log_file << "Dedup size " << dedup_size << " B " 
+            << std::fixed << std::setprecision(2)
+            << (float)dedup_size / (1024 * 1024) << " MB " 
+            << (float)dedup_size / (1024 * 1024 * 1024) << " GB" << endl;
+
+    // thDR
     float dedup_ratio_1 = double(dedup_size) / double(sum_size);
     float dedup_ratio_2 = double(sum_size) / (double(sum_size) - double(dedup_size));
-    log_file << "Dedup ratio 1: " << dedup_ratio_1 << endl;
-    log_file << "Dedup ratio 2: " << dedup_ratio_2 << endl;
+    log_file << "thDR Percent Form: " << dedup_ratio_1 << endl;
+    log_file << "thDR Decimal Form: " << dedup_ratio_2 << endl;
+    GlobalMetadataManagerPtr->appendThDR(dedup_ratio_1);   
 
     float read_amplification = (double(reference_containers.size()) * CONTAINER_SIZE) / double(sum_size);
     log_file << "Read amplification: " << read_amplification << endl;
-
-    // 追加thDR
-    GlobalMetadataManagerPtr->appendThDR(dedup_ratio_1);    
 
     // update backup job
     bj.dedup_chunks += dedup_chunks;
@@ -882,16 +903,17 @@ void writeFileDedupScode(string path, int current_version){
     bj.sum_size += sum_size;
     bj.file_num++;
 
-    // total statistic
+    // ADR
     float actual_dratio_1 = double(bj.dedup_size) / double(bj.sum_size);
     float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));
-    log_file << "Actual dedup ratio after backup 1: " << actual_dratio_1 << endl;
-    log_file << "Actual dedup ratio after backup 2: " << actual_dratio_2 << endl;
+    log_file << "ADR Percent Form: " << actual_dratio_1 << endl;
+    log_file << "ADR Decimal Form: " << actual_dratio_2 << endl;
+    GlobalMetadataManagerPtr->appendADR(actual_dratio_1);
     
     // free 
     close(idf);
 
-    log_file << "Finish write file" << endl;
+    log_file << endl;
 }
 
 /*

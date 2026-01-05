@@ -64,6 +64,7 @@ class Config{
         int getInterval(){return this->interval;}
         enum DedupType getDedupType(){return this->dedup_type;}
         string getDedupLogPath(){return this->log_file_path;}   
+        bool getContainerFakeIO(){return this->container_fake_io;}
 
         // Setters
         void setTask(char* s){this->tt = taskTypeTrans(s);}
@@ -87,6 +88,7 @@ class Config{
         void setInterval(int n){this->interval = n;};
         void setLogFilePath(char* s){this->log_file_path = s;}
         void setDedupType(char* s){this->dedup_type = dedupTypeTrans(s);};
+        void setContainerFakeIO(char* s){this->container_fake_io = yesNoTrans(s);}
 
 
         // you know
@@ -154,6 +156,8 @@ class Config{
                     Config::getInstance().setLogFilePath(valuestring);
                 }else if(strcmp(name, "DedupType") == 0){
                     Config::setDedupType(valuestring);
+                }else if(strcmp(name, "ContainerFakeIO") == 0){
+                    Config::setContainerFakeIO(valuestring);
                 }
             }
         }
@@ -170,6 +174,7 @@ class Config{
         int delete_id;
         int avg_chunk_size;     // unit KiB
         int normal_level;
+        bool container_fake_io;
 
         // 元数据相关参数
         string fp_DeltaDedup_folder_path;
@@ -178,9 +183,7 @@ class Config{
         string container_path;
         string base_container_path;
         string delta_container_path;
-
         int base_size;
-
         string log_file_path;
         enum DedupType dedup_type;
         int interval;
@@ -243,6 +246,10 @@ class Config{
             if(strcmp(s, "yes") == 0){
                 return true;
             }else if (strcmp(s, "no") == 0){
+                return false;
+            }else if(strcmp(s, "true") == 0){
+                return true;
+            }else if (strcmp(s, "false") == 0){
                 return false;
             }else{
                 printf("Not support yes no type:%s\n", s);

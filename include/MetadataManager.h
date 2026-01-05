@@ -71,8 +71,9 @@ class MetadataManager {
         LookupResult dedupLookupDSFI(const SHA1FP& chunk_fp);
         SHA1FP popSampleChunkFP();
         uint32_t popSampleChunkLen();
-        void ADREFinal(int current_version_id);
-        void appendThDR(float thDR);
+        void ADREFinal(int, uint64_t system_all_size, uint64_t system_dedup_size,  uint64_t file_size);
+        void appendThDR(float);
+        void appendADR(float);
         float getSampleRatio();
         void ScodeInit();
         void ScodeInitSingleFile();
@@ -119,6 +120,7 @@ class MetadataManager {
         // 如果该base table closed，直接从map中删除
         using BaseId = int;
         using thDR = float;
+        using ADR = float;
 
         struct SampleResult {
             uint64_t sample_size;
@@ -130,7 +132,10 @@ class MetadataManager {
 
         struct BaseFPTable{
             fpTable table;
+
+            // size should be equal
             std::vector<thDR> thDRs;
+            std::vector<ADR> ADRs;
         };
 
         std::map<BaseId, SampleResult> sample_results;
