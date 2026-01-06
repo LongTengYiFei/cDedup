@@ -802,7 +802,7 @@ void writeFileDedupScode(string path, int current_version){
     /*
         3. compute adr and decide which base table
     */
-    GlobalMetadataManagerPtr->ADREFinal(current_version, bj.sum_size, bj.dedup_size, file_size);
+    GlobalMetadataManagerPtr->ADREFinal(current_version, file_size);
     
     for(int i=0; i < file_block_num; i++){
 
@@ -906,9 +906,9 @@ void writeFileDedupScode(string path, int current_version){
     // ADR
     float actual_dratio_1 = double(bj.dedup_size) / double(bj.sum_size);
     float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));
-    log_file << "ADR Percent Form: " << actual_dratio_1 << endl;
-    log_file << "ADR Decimal Form: " << actual_dratio_2 << endl;
-    GlobalMetadataManagerPtr->appendADR(actual_dratio_1);
+    log_file << "multi source ADR Percent Form: " << actual_dratio_1 << endl;
+    log_file << "multi source ADR Decimal Form: " << actual_dratio_2 << endl;
+    GlobalMetadataManagerPtr->appendADR(sum_size, dedup_size);
     
     // free 
     close(idf);
@@ -1326,11 +1326,15 @@ void traverseFilesList(string files_list) {
             } 
 
         }else if(dt == DedupType::DedupScode){
+            // write files
             GlobalMetadataManagerPtr->ScodeInit();
             int current_version = 0;
             for (const auto& path : files){
                 writeFileDedupScode(path, current_version++);
             } 
+
+            // print statistic
+            GlobalMetadataManagerPtr->ScodePrintStatistics(log_file);
 
         }else{
             std::cerr << "Error: Not support dedup type" << std::endl;

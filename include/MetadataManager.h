@@ -71,11 +71,12 @@ class MetadataManager {
         LookupResult dedupLookupDSFI(const SHA1FP& chunk_fp);
         SHA1FP popSampleChunkFP();
         uint32_t popSampleChunkLen();
-        void ADREFinal(int, uint64_t system_all_size, uint64_t system_dedup_size,  uint64_t file_size);
+        void ADREFinal(int, uint64_t file_size);
         void appendThDR(float);
-        void appendADR(float);
+        void appendADR(uint64_t single_file_size, uint64_t single_file_dup_size);
         float getSampleRatio();
         void ScodeInit();
+        void ScodePrintStatistics(std::ofstream &log_file);
         void ScodeInitSingleFile();
 
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value);
@@ -115,10 +116,11 @@ class MetadataManager {
 
         /*
             ScoDe
+             每个base version对应自身以及附加delta version所有的thDR；
+            如果该base table closed，直接从map中删除
         */
-        // 每个base version对应自身以及附加delta version所有的thDR；
-        // 如果该base table closed，直接从map中删除
         using BaseId = int;
+        using SourceId = int;
         using thDR = float;
         using ADR = float;
 
@@ -131,22 +133,31 @@ class MetadataManager {
         fpTable sample_self_table;
 
         struct BaseFPTable{
+            SourceId source_id;
             fpTable table;
-
-            // size should be equal
             std::vector<thDR> thDRs;
-            std::vector<ADR> ADRs;
         };
 
-        std::map<BaseId, SampleResult> sample_results;
-        std::map<BaseId, BaseFPTable> current_base_FP_tables; 
+        struct SourceInfo{
+            uint64_t sum_size;
+            uint64_t dup_size;
+            std::vector<float> ADRs;
+        };
+
+        SourceId source_incremental = 0;
+        SourceId selected_source;
+        std::map<SourceId, SourceInfo> source_infos;
+        
         BaseId selected_base_version;
+        std::map<BaseId, BaseFPTable> current_base_FP_tables; 
+
+        std::map<BaseId, SampleResult> sample_results;
         bool base_table_found;
         bool isCurrentBase;
         fpTable delta_table;
-        fpTable* current_fp_indexing_table;
         std::queue<SHA1FP> sample_chunk_fps;
         std::queue<uint32_t> sample_chunk_lens;
+
         /*
             SDR <>= ldr_ratio * LDR
             ldr_ratio, sample_ratio 需做敏感性测试；

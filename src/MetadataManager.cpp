@@ -5,6 +5,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <iostream>
+#include <fstream>
 
 MetadataManager *GlobalMetadataManagerPtr;
 
@@ -318,16 +320,17 @@ uint32_t MetadataManager::popSampleChunkLen(){
     return ans;
 }
 
-void MetadataManager::ADREFinal(int current_version_id, 
-                                uint64_t system_all_size, uint64_t system_dedup_size,  uint64_t file_size){
+void MetadataManager::ADREFinal(int current_version_id, uint64_t file_size){
     // first case
     if(current_version_id == 0){
         // 首个版本无需检测 sample
         selected_base_version = current_version_id;
+        selected_source = source_incremental++;
         isCurrentBase = true;
 
         BaseFPTable new_table;
         this->current_base_FP_tables[current_version_id] = new_table;
+        this->current_base_FP_tables[current_version_id].source_id = selected_source;
         return ;
     }
 
@@ -341,15 +344,20 @@ void MetadataManager::ADREFinal(int current_version_id,
         BaseId bid = x.first;
         x.second.SDR = ((float)x.second.sample_dup_size_against_base + (float)sample_self_dup) / (float)x.second.sample_size;
         
-        if(x.second.SDR >= (ldr_ratio * current_base_FP_tables[bid].thDRs.back())){   
+        if(x.second.SDR >= (ldr_ratio * current_base_FP_tables[bid].thDRs.back()) && x.second.SDR >= 0.1){   
             // control
             base_table_found = true;
             selected_base_version = bid; // set base, may be change later;
+            selected_source = current_base_FP_tables[selected_base_version].source_id; // will not change;
 
             // compute
             estimated_thDR_N = x.second.SDR;
-            estimated_ADR_N = (float)(file_size * estimated_thDR_N + system_dedup_size) / (float)(system_all_size + file_size);
-            ADR_N_sub_1 = this->current_base_FP_tables[selected_base_version].ADRs.back();
+            uint64_t source_sum_size = source_infos[selected_source].sum_size;
+            uint64_t source_dup_size = source_infos[selected_source].dup_size;
+            estimated_ADR_N = (float)(file_size * estimated_thDR_N + source_dup_size) / (float)(source_sum_size + file_size);
+            
+            // get
+            ADR_N_sub_1 = source_infos[selected_source].ADRs.back();
         }
     }
 
@@ -359,23 +367,29 @@ void MetadataManager::ADREFinal(int current_version_id,
             // Case1:  base table found ADR N < ADR N-1
             BaseFPTable new_table;
             this->current_base_FP_tables[current_version_id] = new_table;
-            current_fp_indexing_table = &this->current_base_FP_tables[current_version_id].table;
-            selected_base_version = current_version_id; // change base to new base
+            this->current_base_FP_tables[current_version_id].source_id = selected_source;
             isCurrentBase = true;
+
+            /*
+                change base to new base
+                base 会改，但是 source 不会改；
+            */
+            selected_base_version = current_version_id; 
 
         }else{
             // Case2:  base table found ADR N >= ADR N-1
             delta_table.clear();
-            current_fp_indexing_table = &delta_table;
             isCurrentBase = false;
         }
 
     }else{
         // Case3: base table not found
+        selected_base_version = current_version_id; // 没found，所以就设置当前version为base；
+        selected_source = source_incremental++; // 没found，列为新source；
+
         BaseFPTable new_table;
         this->current_base_FP_tables[current_version_id] = new_table;
-        current_fp_indexing_table = &this->current_base_FP_tables[current_version_id].table;
-        selected_base_version = current_version_id; // 没found，所以就设置当前version为base；
+        this->current_base_FP_tables[current_version_id].source_id = selected_source;
         isCurrentBase = true;
     }
     return ;
@@ -385,8 +399,14 @@ void MetadataManager::appendThDR(float thDR){
     current_base_FP_tables[selected_base_version].thDRs.push_back(thDR);
 }
 
-void MetadataManager::appendADR(float ADR){
-    current_base_FP_tables[selected_base_version].ADRs.push_back(ADR);
+void MetadataManager::appendADR(uint64_t single_file_size, uint64_t single_file_dup_size){
+    // compute
+    source_infos[selected_source].sum_size += single_file_size;
+    source_infos[selected_source].dup_size += single_file_dup_size;
+    float updated_ADR = (float)source_infos[selected_source].dup_size / (float)source_infos[selected_source].sum_size;
+
+    // append
+    source_infos[selected_source].ADRs.push_back(updated_ADR);
 }
 
 float MetadataManager::getSampleRatio(){
@@ -413,6 +433,38 @@ void MetadataManager::ScodeInit(){
         初始化第一个version
     */
     this->current_base_FP_tables[0] = BaseFPTable();
+}
+
+void MetadataManager::ScodePrintStatistics(std::ofstream &log_file){
+    log_file << "--- --- --- ScoDe statistics --- --- ---" << std::endl;
+    log_file << "Base IDs: " << std::endl;
+    for(auto& table: this->current_base_FP_tables){
+        BaseId base_id = table.first;
+    }
+
+    log_file << std::endl;
+    for(auto& table: this->current_base_FP_tables){
+        BaseId base_id = table.first;
+        BaseFPTable& base_table = table.second;
+        log_file << "Base ID: " << base_id << std::endl;
+        log_file << "thDRs: " << std::endl;
+        for(auto& thDR: base_table.thDRs){
+            log_file << thDR << " ";
+        }
+        log_file << std::endl;
+    }
+
+    log_file << "Source Infos: " << std::endl;
+    for(auto& source: this->source_infos){
+        SourceId source_id = source.first;
+        SourceInfo& source_info = source.second;
+        log_file << "Source ID: " << source_id << std::endl;
+        log_file << "ADRs: " << std::endl;
+        for(auto& ADR: source_info.ADRs){
+            log_file << ADR << " ";
+        }
+        log_file << std::endl;
+    }
 }
 
 void MetadataManager::clearDedupIntervalTable(){
