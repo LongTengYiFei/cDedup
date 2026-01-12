@@ -435,6 +435,10 @@ void MetadataManager::ScodeInit(){
     this->current_base_FP_tables[0] = BaseFPTable();
 }
 
+bool MetadataManager::isBaseVersion(){
+    return isCurrentBase;
+}
+
 void MetadataManager::ScodePrintStatistics(std::ofstream &log_file){
     log_file << "--- --- --- ScoDe statistics --- --- ---" << std::endl;
     log_file << "Base IDs: " << std::endl;

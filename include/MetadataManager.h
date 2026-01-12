@@ -78,6 +78,7 @@ class MetadataManager {
         void ScodeInit();
         void ScodePrintStatistics(std::ofstream &log_file);
         void ScodeInitSingleFile();
+        bool isBaseVersion();
 
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value);
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int version);

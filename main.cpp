@@ -306,6 +306,8 @@ void writeFileNaive(string path){
     uint64_t sum_size = 0;
     uint64_t hash_collision_sum = 0;
     set<int> reference_containers;
+
+    bool container_fake_io = Config::getInstance().getContainerFakeIO();
     
     // 普通分块重删，来一个块查寻一次，然后把non-duplicate chunk保存到container去
     for(;;){
@@ -328,11 +330,27 @@ void writeFileNaive(string path){
             LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookup(tmp_sha1_fp);
 
             if(!lookup_result.dup){
-                // save chunk itself
-                saveChunkToContainer(container_buf_pointer, container_buffer, 
-                                    container_index, container_inner_offset, container_inner_index,
-                                    chunk_length, file_offset, file_cache, (void*)&tmp_sha1_fp,
-                                    Config::getInstance().getContainersPath().c_str());
+                if(container_fake_io){
+                    if(container_inner_offset + chunk_length > CONTAINER_SIZE){
+                        container_index ++;
+                        container_inner_offset = 0;
+                        container_inner_offset += chunk_length;
+                    }else{
+                        container_inner_offset += chunk_length;
+                    }
+
+                }else{
+                    // save chunk itself
+                    saveChunkToContainer(container_buf_pointer, container_buffer, 
+                                        container_index, container_inner_offset, container_inner_index,
+                                        chunk_length, file_offset, file_cache, (void*)&tmp_sha1_fp,
+                                        Config::getInstance().getContainersPath().c_str());
+                    
+                    // conatainer write control
+                    container_inner_offset += chunk_length;
+                    container_buf_pointer += chunk_length;
+                    container_inner_index ++;
+                }
                 
                 // save chunk metadata
                 tmp_entry_value.container_number = container_index;
@@ -343,12 +361,6 @@ void writeFileNaive(string path){
 
                 GlobalMetadataManagerPtr->addNewEntry(tmp_sha1_fp, tmp_entry_value);
                 reference_containers.insert(container_index);
-
-                // rev
-                container_inner_offset += chunk_length;
-                container_buf_pointer += chunk_length;
-                container_inner_index ++;
-                rev_container_cnt ++;
 
             }else{
                 dedup_chunks ++;
@@ -689,6 +701,9 @@ void writeFileDedupFixedInterval(string path, int current_version, int interval)
 }
 
 void writeFileDedupScode(string path, int current_version){
+    struct timeval start_time, end_time;
+    gettimeofday(&start_time, NULL);
+
     log_file << "Start write file: " << path << ", method: Dedup Scode" << std::endl;
 
     int idf = open(path.c_str(), O_RDONLY | O_DIRECT, 0777);
@@ -893,6 +908,7 @@ void writeFileDedupScode(string path, int current_version){
     log_file << "thDR Decimal Form: " << dedup_ratio_2 << endl;
     GlobalMetadataManagerPtr->appendThDR(dedup_ratio_1);   
 
+    // RA
     float read_amplification = (double(reference_containers.size()) * CONTAINER_SIZE) / double(sum_size);
     log_file << "Read amplification: " << read_amplification << endl;
 
@@ -903,6 +919,19 @@ void writeFileDedupScode(string path, int current_version){
     bj.sum_size += sum_size;
     bj.file_num++;
 
+    /* 
+        unique chunk size
+        对于 delta 版本来说，就是 delta container size；
+        对于 base 版本，不用输出，直接输出为0；
+    */
+    if( !GlobalMetadataManagerPtr->isBaseVersion() ){
+        log_file << "delta container size MB: " << double(sum_size - dedup_size) / (1024 * 1024) << endl;
+    }else{
+        log_file << "delta container size MB: " << 0 << endl;
+    }
+        
+
+
     // ADR
     float actual_dratio_1 = double(bj.dedup_size) / double(bj.sum_size);
     float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));
@@ -910,6 +939,11 @@ void writeFileDedupScode(string path, int current_version){
     log_file << "multi source ADR Decimal Form: " << actual_dratio_2 << endl;
     GlobalMetadataManagerPtr->appendADR(sum_size, dedup_size);
     
+    gettimeofday(&end_time, NULL);
+    // throughput
+    float throughput = double(sum_size) / double((end_time.tv_sec - start_time.tv_sec) + (end_time.tv_usec - start_time.tv_usec) / 1000000.0);
+    log_file << "Throughput: " << throughput / (1024 * 1024) << " MB/s" << endl;
+
     // free 
     close(idf);
 
