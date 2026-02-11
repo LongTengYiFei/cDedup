@@ -5,7 +5,7 @@ SRC += ./src/MetadataManager.cpp
 SRC += ./src/ContainerCache.cpp 
 SRC += ./utils/cJSON.c 
 SRC += ./src/jcr.cpp 
-OPTION = -g -O3 -mavx512bw -std=c++17
+OPTION = -g -O0 -mavx512bw -std=c++17
 EXE_NAME = cDedup
 
 amazing:

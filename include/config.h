@@ -17,9 +17,10 @@ enum TASK_TYPE{
     TASK_WRITE,
     TASK_WRITE_PIPELINE,
     TASK_DELETE,
-    TASK_INTERVAL_OBSERVATION,
-    TASK_WINDOW_OBSERVATION,
+    TASK_OBSERVATION_INTERVAL,
+    TASK_OBSERVATION_WINDOW,
     TASK_DEDUP_FIRST_ESTIMATION,
+    TASK_OBSERVATION_MIGRATION_MFDedup,
     NOT_CHOOSED
 };
 
@@ -218,9 +219,11 @@ class Config{
             }else if (strcmp(s, "delete") == 0){
                 return TASK_DELETE;
             }else if(strcmp(s, "interval_observation") == 0){
-                return TASK_INTERVAL_OBSERVATION;
+                return TASK_OBSERVATION_INTERVAL;
             }else if(strcmp(s, "window_observation") == 0){
-                return TASK_WINDOW_OBSERVATION;
+                return TASK_OBSERVATION_WINDOW;
+            }else if(strcmp(s, "observation_migration_MFDedup") == 0){
+                return TASK_OBSERVATION_MIGRATION_MFDedup;
             }else if(strcmp(s, "dedup_first_estimation") == 0){
                return TASK_DEDUP_FIRST_ESTIMATION; 
             }else{

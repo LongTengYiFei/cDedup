@@ -98,6 +98,13 @@ class MetadataManager {
         void reserveDedupIntervalTablesByGroup(int n, int group_index);
         void clearDedupIntervalTable();
 
+        // MFDedup observation
+        std::vector<uint64_t> getMigrationDataSizeTH();
+        std::vector<uint64_t> getArhiveDataSizeTH();
+        LookupResult dedupLookupMFDedup(const SHA1FP& sha1, const ENTRY_VALUE& ev);
+        void MFDedupNewTable();
+        void MFDedupMigration();
+
     private:
         using fpTable = std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer>;
         std::string metadata_file_path;
@@ -171,6 +178,12 @@ class MetadataManager {
         */
        fpTable ES_base_table;
        fpTable ES_delta_table;
+
+       // MFDedup data migration observation
+       std::vector<uint64_t> th_migrate_data_size;
+       std::vector<uint64_t> th_archive_data_size;
+       std::vector<fpTable> MFDedup_self_tables;
+       std::queue<fpTable> active_cat;
 
 };
 #endif

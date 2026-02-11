@@ -536,3 +536,90 @@ int MetadataManager::addRefCnt(const SHA1FP sha1){
 ENTRY_VALUE MetadataManager::getEntry(const SHA1FP sha1){
     return this->fp_table_origin[sha1];
 }
+
+
+/* 
+    MFDedup observation
+*/
+
+std::vector<uint64_t> MetadataManager::getMigrationDataSizeTH(){
+    return this->th_migrate_data_size;
+}
+
+std::vector<uint64_t> MetadataManager::getArhiveDataSizeTH(){
+    return this->th_archive_data_size;
+}
+
+LookupResult MetadataManager::dedupLookupMFDedup(const SHA1FP& sha1, const ENTRY_VALUE& ev){
+
+    // 自查；
+    auto dedupIter = this->MFDedup_self_tables.back().find(sha1);
+    if(dedupIter != this->MFDedup_self_tables.back().end()){
+        return LookupResult{true, 0};
+    }else{
+        this->MFDedup_self_tables.back()[sha1] = ev;
+    }
+
+    if(MFDedup_self_tables.size() > 1){
+        // 查上一个table；
+        dedupIter = this->MFDedup_self_tables[MFDedup_self_tables.size() - 2].find(sha1);
+        if(dedupIter != this->MFDedup_self_tables[MFDedup_self_tables.size() - 2].end()){
+            return LookupResult{true, 0};
+        }
+    }
+
+    return LookupResult{false, 0};
+}
+
+void MetadataManager::MFDedupNewTable(){
+    MFDedup_self_tables.emplace_back();
+}
+
+void MetadataManager::MFDedupMigration(){
+    if(MFDedup_self_tables.size() <= 1){
+        // 为下一次migration准备active cat；
+        this->active_cat.push(this->MFDedup_self_tables.back());
+        th_migrate_data_size.push_back(0);
+        th_archive_data_size.push_back(0);
+        return ;
+
+    }else{
+        th_migrate_data_size.push_back(0);
+        th_archive_data_size.push_back(0);
+
+        // 迁移；
+        // 我们将论文中的Archive视为迁移的数据，并统计；
+        int current_version = MFDedup_self_tables.size();
+        int active_queue_size = this->active_cat.size();
+
+        for(int i=0; i<= active_queue_size-1; i++){
+            // 队尾创建空cat
+            active_cat.emplace(); 
+
+            // 遍历队头cat
+            for(auto& x: this->active_cat.front()){
+                const SHA1FP & sha1 = x.first;
+                auto it = this->MFDedup_self_tables[current_version-1].find(sha1);
+
+                if(it != this->MFDedup_self_tables[current_version-1].end()){
+                    // 如果找到，那么则迁移至队尾cat
+                    // migrate
+                    this->active_cat.back().emplace(sha1, it->second);
+                    
+                    // 只有队尾才是自身需要迁移的，其他的都是前面版本的，都已经迁移过了，重复计算会导致迁移数量巨大；
+                    if(i == active_queue_size-1)
+                        this->th_migrate_data_size.back() += x.second.chunk_length;
+                }else{
+                    // archive
+                    this->th_archive_data_size.back() += x.second.chunk_length;
+                }
+                    
+            }
+
+            active_cat.pop(); // 队头出队已经被migrate active cat
+        }
+
+        // 最新入队
+        this->active_cat.push(this->MFDedup_self_tables.back());
+    }
+}

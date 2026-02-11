@@ -1304,6 +1304,102 @@ void writeFileDedupFirstEstimationDR(string path, int current_version){
     close(idf);
 }
 
+/*
+    默认 FAKE container IO；
+    模拟MFDedup流程，主要用于观察数据迁移的量；
+
+    从第二个版本开始，才有数据迁移，第一个版本不会触发数据迁移；
+*/
+void writeFileObservationMigrationMFDedup(string path, int current_version){
+    log_file << "Start write file: " << path << ", method:  Observation Migration MFDedup" << std::endl;
+
+    int idf = open(path.c_str(), O_RDONLY | O_DIRECT);
+    if(idf < 0){
+        std::printf("open file error, id %d, %s\n", errno, strerror(errno));
+        exit(-1);
+    }
+
+    // write control
+    uint32_t chunk_length = 0;
+    uint32_t file_offset = 0;
+    uint32_t n_read = 0;
+    struct ENTRY_VALUE tmp_entry_value;
+    struct SHA1FP tmp_sha1_fp;
+
+    // statistic
+    uint64_t single_file_dedup_chunks = 0;
+    uint64_t single_file_dedup_size = 0;
+    uint64_t single_file_sum_chunks = 0;
+    uint64_t single_file_sum_size = 0;
+
+    // write file loop
+    GlobalMetadataManagerPtr->MFDedupNewTable();
+
+    for(;;){
+        file_offset = 0;
+
+        n_read = read(idf, (void*)file_cache, BLOCK_SIZE);
+
+        if(n_read <= 0){
+            break;
+        }
+
+        while(file_offset < n_read){  
+            // Chunk
+            chunk_length = chunking(file_cache + file_offset, n_read - file_offset);
+            tmp_entry_value.chunk_length = chunk_length;
+            
+            // Hash
+            SHA1(file_cache + file_offset, chunk_length, (uint8_t*)&tmp_sha1_fp);
+            
+            // Dedup
+            LookupResult lookup_result = GlobalMetadataManagerPtr->dedupLookupMFDedup(tmp_sha1_fp, tmp_entry_value);
+
+            if(lookup_result.dup){
+                single_file_dedup_chunks ++;
+                single_file_dedup_size += chunk_length;
+            }
+
+            // Statistic
+            single_file_sum_chunks ++;
+            single_file_sum_size += chunk_length;
+
+            file_offset += chunk_length;
+        }
+    }
+
+    GlobalMetadataManagerPtr->MFDedupMigration();
+
+    // #th statistic
+    log_file << "Sum chunks " << single_file_sum_chunks << endl;
+    log_file << "Sum size " << single_file_sum_size << endl;
+    log_file << "Dedup chunks " << single_file_dedup_chunks << endl;
+    log_file << "Dedup size " << single_file_dedup_size << endl;
+    
+    float thDR = double(single_file_dedup_size) / double(single_file_sum_size);
+    log_file << "th DR percentage format: " << thDR << endl;
+
+    // 这里图省事，只用到最后一个；
+    vector<uint64_t> th_archive_data_size = GlobalMetadataManagerPtr->getArhiveDataSizeTH();
+    vector<uint64_t> th_migrate_data_size = GlobalMetadataManagerPtr->getMigrationDataSizeTH();
+    log_file << " th archive data size " << th_archive_data_size.back() << endl;
+    log_file << " th migrate data size " << th_migrate_data_size.back() << endl;
+    log_file << " th archive data portion " << th_archive_data_size.back() * 1.0 / single_file_sum_size << endl;
+    log_file << " th migrate data portion " << th_migrate_data_size.back() * 1.0 / single_file_sum_size << endl;
+
+    // update backup job
+    bj.dedup_chunks += single_file_dedup_chunks;
+    bj.dedup_size += single_file_dedup_size;
+    bj.sum_chunks += single_file_sum_chunks;
+    bj.sum_size += single_file_sum_size;
+    bj.file_num++;
+
+    // free 
+    close(idf);
+
+    log_file << "Finish write file" << endl;
+}
+
 std::vector<fs::path> traverseDirectory(const fs::path& directory) {
     try {
         std::vector<fs::path> files;
@@ -1525,7 +1621,7 @@ int main(int argc, char** argv){
         // save metadata entry
         GlobalMetadataManagerPtr->save();
 
-    }else if(Config::getInstance().getTaskType() == TASK_INTERVAL_OBSERVATION){
+    }else if(Config::getInstance().getTaskType() == TASK_OBSERVATION_INTERVAL){
         // init interval task
         interval_tasks.resize(20);
         for(int i=5; i<=100; i+=5){
@@ -1583,7 +1679,7 @@ int main(int argc, char** argv){
             }
         }
 
-    }else if(Config::getInstance().getTaskType() == TASK_WINDOW_OBSERVATION){
+    }else if(Config::getInstance().getTaskType() == TASK_OBSERVATION_WINDOW){
         vector<string> all_files = getAllFiles(Config::getInstance().getInputPath());
 
         // windows init
@@ -1626,6 +1722,19 @@ int main(int argc, char** argv){
 
         for(int i=0; i<version_num ; i++){
             writeFileDedupFirstEstimationDR(all_files[i], i);
+        }
+    }else if(Config::getInstance().getTaskType() == TASK_OBSERVATION_MIGRATION_MFDedup){
+        /*
+            指标1 每个版本迁移
+            指标2 数据集总迁移
+            如果是混合负载，实际上MFDedup不会有任何数据迁移
+            GCCDF 的可以不用实现，利用MFDedup反推结果(依据论文的里面写的比例)；
+        */
+
+        vector<string> all_files = getAllFiles(Config::getInstance().getInputPath());
+
+        for(int i=0; i<all_files.size() ; i++){
+            writeFileObservationMigrationMFDedup(all_files[i], i);
         }
     }
     // }else if(Config::getInstance().getTaskType() == TASK_RESTORE){
