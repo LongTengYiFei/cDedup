@@ -785,7 +785,9 @@ void writeFileDedupScode(string path, int current_version){
         uint64_t idx = sampled_blocks[i];       
         off_t offset = idx * BLOCK_SIZE;
         size_t read_size = (offset + BLOCK_SIZE > file_size) ? (file_size - offset) : BLOCK_SIZE;
-        ssize_t ret = pread(idf, sample_cache + i * BLOCK_SIZE, read_size, offset);
+
+        // 由于sample cache使用direct io分配，所以必须读取块大小倍数的长度；
+        ssize_t ret = pread(idf, sample_cache + i * BLOCK_SIZE, BLOCK_SIZE, offset);
         if (ret == -1) {
             perror("sample pread failed"); 
             break;
@@ -1632,7 +1634,6 @@ int main(int argc, char** argv){
             interval_tasks[i/5-1].dedup_size = 0;
             interval_tasks[i/5-1].total_container_reference = 0;
             interval_tasks[i/5-1].file_num = 0;
-
 
             intervals.push_back(i);
             container_indice.push_back(0);
