@@ -179,3 +179,5 @@ gc_test/a.out
 gc_test/gc_test
 global_stat.json
 global_stat.json
+workloads/*
+logs/*
