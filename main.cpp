@@ -279,6 +279,9 @@ void initChunkingAlgorithm(){
 }
 
 void writeFileNaive(string path){
+    // start time
+    auto start_time = std::chrono::high_resolution_clock::now();
+
     log_file << "Start write file: " << path << ", method: naive" << std::endl;
 
     int idf = open(path.c_str(), O_RDONLY | O_DIRECT);
@@ -415,6 +418,12 @@ void writeFileNaive(string path){
     log_file << "Actual dedup ratio after backup 1: " << actual_dratio_1 << endl;
     log_file << "Actual dedup ratio after backup 2: " << actual_dratio_2 << endl;
     
+    // end time and throughput
+    auto end_time = std::chrono::system_clock::now();
+    auto total_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+    float throughput = (float)(sum_size) / MB / ((float)(total_time)/1000000);
+    log_file<<"Throughput: "<<throughput<<" MB/s"<<endl;
+
     // free 
     close(idf);
 
@@ -819,7 +828,8 @@ void writeFileDedupScode(string path, int current_version){
     /*
         3. compute adr and decide which base table
     */
-    GlobalMetadataManagerPtr->ADREFinal(current_version, file_size);
+    float estimated_thDR_N = 0;
+    GlobalMetadataManagerPtr->ADREFinal(current_version, file_size, estimated_thDR_N);
     
     for(int i=0; i < file_block_num; i++){
 
@@ -890,8 +900,6 @@ void writeFileDedupScode(string path, int current_version){
     saveFileRecipe(file_recipe, Config::getInstance().getFileRecipesPath().c_str());
 
     // #th statistic
-
-
     log_file << "Sum size "
         << sum_size << " B "
         << std::fixed << std::setprecision(2)
@@ -909,6 +917,8 @@ void writeFileDedupScode(string path, int current_version){
     log_file << "thDR Percent Form: " << dedup_ratio_1 << endl;
     log_file << "thDR Decimal Form: " << dedup_ratio_2 << endl;
     GlobalMetadataManagerPtr->appendThDR(dedup_ratio_1);   
+
+    log_file << "estimated thDR N: " << estimated_thDR_N << endl;
 
     // RA
     float read_amplification = (double(reference_containers.size()) * CONTAINER_SIZE) / double(sum_size);
@@ -932,8 +942,6 @@ void writeFileDedupScode(string path, int current_version){
         log_file << "delta container size MB: " << 0 << endl;
     }
         
-
-
     // ADR
     float actual_dratio_1 = double(bj.dedup_size) / double(bj.sum_size);
     float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));

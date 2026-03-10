@@ -254,6 +254,14 @@ class Config{
                 return true;
             }else if (strcmp(s, "false") == 0){
                 return false;
+            }else if(strcmp(s, "Yes") == 0){
+                return true;
+            }else if (strcmp(s, "No") == 0){
+                return false;
+            }else if(strcmp(s, "True") == 0){
+                return true;
+            }else if (strcmp(s, "False") == 0){
+                return false;
             }else{
                 printf("Not support yes no type:%s\n", s);
                 exit(-1);

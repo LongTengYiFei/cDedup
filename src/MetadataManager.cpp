@@ -320,7 +320,7 @@ uint32_t MetadataManager::popSampleChunkLen(){
     return ans;
 }
 
-void MetadataManager::ADREFinal(int current_version_id, uint64_t file_size){
+void MetadataManager::ADREFinal(int current_version_id, uint64_t file_size, float & estimated_thDR_N){
     // first case
     if(current_version_id == 0){
         // 首个版本无需检测 sample
@@ -337,7 +337,7 @@ void MetadataManager::ADREFinal(int current_version_id, uint64_t file_size){
     // thDR of sample against each base FP table
     selected_base_version = -1;
     base_table_found = false;
-    float estimated_thDR_N = 0;
+    estimated_thDR_N = 0;
     float estimated_ADR_N = 0;
     float ADR_N_sub_1 = 0;
     for(auto &x: sample_results){

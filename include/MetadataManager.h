@@ -71,7 +71,7 @@ class MetadataManager {
         LookupResult dedupLookupDSFI(const SHA1FP& chunk_fp);
         SHA1FP popSampleChunkFP();
         uint32_t popSampleChunkLen();
-        void ADREFinal(int, uint64_t file_size);
+        void ADREFinal(int, uint64_t file_size, float & estimated_thDR_N);
         void appendThDR(float);
         void appendADR(uint64_t single_file_size, uint64_t single_file_dup_size);
         float getSampleRatio();
@@ -171,7 +171,7 @@ class MetadataManager {
             ldr_ratio, sample_ratio 需做敏感性测试；
         */
         float ldr_ratio = 0.5; 
-        float sample_ratio = 0.1;
+        float sample_ratio = 0.10;
 
         /*
             Estimation: sample ratio sensitivity
