@@ -51,6 +51,14 @@ struct TupleEqualer {
     }
 };
 
+
+struct backupInfo{
+    uint64_t backup_size;
+    uint64_t base_container_size;
+    uint64_t delta_container_size;
+    bool isBaseVersion;
+};
+
 class MetadataManager {
     public:
         MetadataManager(const std::string& file_path) {
@@ -72,7 +80,7 @@ class MetadataManager {
         SHA1FP popSampleChunkFP();
         uint32_t popSampleChunkLen();
         void ADREFinal(int, uint64_t file_size, float & estimated_thDR_N);
-        void appendThDR(float);
+        void appendThDR(float, int version);
         void appendADR(uint64_t single_file_size, uint64_t single_file_dup_size);
         float getSampleRatio();
         void ScodeInit();
@@ -104,6 +112,10 @@ class MetadataManager {
         LookupResult dedupLookupMFDedup(const SHA1FP& sha1, const ENTRY_VALUE& ev);
         void MFDedupNewTable();
         void MFDedupMigration();
+
+        // data churn simulation
+        void simulateDataChurn();
+        void appendBackupInfo(const backupInfo& info);
 
     private:
         using fpTable = std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer>;
@@ -144,6 +156,7 @@ class MetadataManager {
             SourceId source_id;
             fpTable table;
             std::vector<thDR> thDRs;
+            std::vector<int> version_numbers;
         };
 
         struct SourceInfo{
@@ -165,6 +178,15 @@ class MetadataManager {
         fpTable delta_table;
         std::queue<SHA1FP> sample_chunk_fps;
         std::queue<uint32_t> sample_chunk_lens;
+
+        std::vector<backupInfo> backup_infos;
+
+        struct simulatedDataChurnResult{
+            uint64_t data_size_after_churn_origin;
+            uint64_t data_size_after_churn_stored;
+            float actual_dedup_ratio_after_churn;
+        };
+        std::vector<simulatedDataChurnResult> simulated_data_churn_results;
 
         /*
             SDR <>= ldr_ratio * LDR

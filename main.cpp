@@ -916,7 +916,7 @@ void writeFileDedupScode(string path, int current_version){
     float dedup_ratio_2 = double(sum_size) / (double(sum_size) - double(dedup_size));
     log_file << "thDR Percent Form: " << dedup_ratio_1 << endl;
     log_file << "thDR Decimal Form: " << dedup_ratio_2 << endl;
-    GlobalMetadataManagerPtr->appendThDR(dedup_ratio_1);   
+    GlobalMetadataManagerPtr->appendThDR(dedup_ratio_1, current_version);   
 
     log_file << "estimated thDR N: " << estimated_thDR_N << endl;
 
@@ -941,7 +941,21 @@ void writeFileDedupScode(string path, int current_version){
     }else{
         log_file << "delta container size MB: " << 0 << endl;
     }
-        
+
+    struct backupInfo current_backup_info;
+    current_backup_info.backup_size = sum_size;
+
+    if(GlobalMetadataManagerPtr->isBaseVersion()){
+        current_backup_info.delta_container_size = 0;
+        current_backup_info.base_container_size = sum_size - dedup_size;
+        current_backup_info.isBaseVersion = true;
+    }else{
+        current_backup_info.delta_container_size = sum_size - dedup_size;
+        current_backup_info.base_container_size = 0;
+        current_backup_info.isBaseVersion = false;
+    }
+    GlobalMetadataManagerPtr->appendBackupInfo(current_backup_info);
+    
     // ADR
     float actual_dratio_1 = double(bj.dedup_size) / double(bj.sum_size);
     float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));
@@ -1472,6 +1486,9 @@ void traverseFilesList(string files_list) {
             for (const auto& path : files){
                 writeFileDedupScode(path, current_version++);
             } 
+
+            // Data Churn 敏感性测试，模拟删除老旧版本，然后观察actual deduplication raito；
+            GlobalMetadataManagerPtr->simulateDataChurn();
 
             // print statistic
             GlobalMetadataManagerPtr->ScodePrintStatistics(log_file);

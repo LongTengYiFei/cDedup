@@ -7,6 +7,7 @@
 #include <string.h>
 #include <iostream>
 #include <fstream>
+#include <unordered_set>
 
 MetadataManager *GlobalMetadataManagerPtr;
 
@@ -395,8 +396,9 @@ void MetadataManager::ADREFinal(int current_version_id, uint64_t file_size, floa
     return ;
 }
 
-void MetadataManager::appendThDR(float thDR){
+void MetadataManager::appendThDR(float thDR, int version){
     current_base_FP_tables[selected_base_version].thDRs.push_back(thDR);
+    current_base_FP_tables[selected_base_version].version_numbers.push_back(version);
 }
 
 void MetadataManager::appendADR(uint64_t single_file_size, uint64_t single_file_dup_size){
@@ -468,6 +470,14 @@ void MetadataManager::ScodePrintStatistics(std::ofstream &log_file){
             log_file << ADR << " ";
         }
         log_file << std::endl;
+    }
+
+    log_file << "Data Churn Simulation Results: " << std::endl;
+    for(int i=0; i<simulated_data_churn_results.size(); i++){
+        log_file << "Churn num: " << (i+20) << std::endl;
+        log_file << "Data size after churn origin: " << simulated_data_churn_results[i].data_size_after_churn_origin << std::endl;
+        log_file << "Data size after churn stored: " << simulated_data_churn_results[i].data_size_after_churn_stored << std::endl;
+        log_file << "Actual dedup ratio after churn: " << simulated_data_churn_results[i].actual_dedup_ratio_after_churn << std::endl;
     }
 }
 
@@ -622,4 +632,69 @@ void MetadataManager::MFDedupMigration(){
         // 最新入队
         this->active_cat.push(this->MFDedup_self_tables.back());
     }
+}
+
+/*
+    硬编码。MFDedup，HAR采用了保留最新20政策，GCCDF采用了保留最新100政策；
+    我们观察变化保留数从20-100，ADR会如何变化，作为敏感性测试；
+*/
+void MetadataManager::simulateDataChurn(){
+    int data_churn_min_num = 20;
+    int data_churn_max_num = 100;
+    int backup_num = backup_infos.size();
+
+    // 正确性检查
+    if(backup_num < data_churn_max_num){
+        printf("simulateDataChurn error: backup num %d < data churn max num %d\n", backup_num, data_churn_max_num);
+        return ;
+    }
+
+    for(int churn_num = data_churn_min_num; churn_num <= data_churn_max_num; churn_num++){
+        uint64_t data_size_after_churn_origin = 0;
+        uint64_t data_size_after_churn_stored = 0;
+        int delte_num = backup_num - churn_num;
+        
+        // 寻找哪些base应该保留；
+        std::unordered_set<int> retain_bases;  
+        for(int i=0; i<=delte_num-1; i++){
+            if(backup_infos[i].isBaseVersion){
+               // 如果这个base的最后一个delta版本都被删掉了，那么这个base也要删掉，否则保留；
+               if(current_base_FP_tables[i].version_numbers.back() <= delte_num-1){
+                    ;
+               }else{
+                    retain_bases.insert(i);
+               }
+            }
+        }
+
+        cout<< "churn num: " << churn_num << ", delete num: " << delte_num << ", retain bases: ";
+        for(auto& base: retain_bases){
+            cout << base << " ";
+        }
+        cout << endl;
+
+        for(int i=0; i<=delte_num-1; i++){
+            if(backup_infos[i].isBaseVersion && retain_bases.find(i) != retain_bases.end()){
+                // 有些本应该删掉的数据，但因为是base version，所以被保留了；
+                data_size_after_churn_stored += backup_infos[i].base_container_size; 
+            }
+        }
+
+        for(int i=delte_num; i<=backup_num-1; i++){
+            data_size_after_churn_origin += backup_infos[i].backup_size;
+            
+            // 实际上这这两个值只有一个不是0；
+            data_size_after_churn_stored += backup_infos[i].base_container_size;
+            data_size_after_churn_stored += backup_infos[i].delta_container_size;
+        }
+
+        float actual_dedup_ratio_after_churn =  ((float)data_size_after_churn_origin -  (float)data_size_after_churn_stored)
+                                                 / (float)data_size_after_churn_origin;
+        simulatedDataChurnResult result{data_size_after_churn_origin, data_size_after_churn_stored, actual_dedup_ratio_after_churn};
+        simulated_data_churn_results.push_back(result);
+    }
+}
+
+void MetadataManager::appendBackupInfo(const backupInfo& info){
+    backup_infos.push_back(info);
 }
