@@ -412,6 +412,13 @@ void writeFileNaive(string path){
     bj.hash_collision_sum += hash_collision_sum;
     bj.file_num++;
 
+    // append backup info
+    struct backupInfo current_backup_info;
+    current_backup_info.backup_size = sum_size;
+    current_backup_info.unique_data_size = sum_size - dedup_size;   
+    GlobalMetadataManagerPtr->appendBackupInfo(current_backup_info);
+
+
     // total statistic
     float actual_dratio_1 = double(bj.dedup_size) / double(bj.sum_size);
     float actual_dratio_2 = double(bj.sum_size) / (double(bj.sum_size) - double(bj.dedup_size));
@@ -1464,6 +1471,9 @@ void traverseFilesList(string files_list) {
                 writeFileNaive(path);
             } 
 
+            GlobalMetadataManagerPtr->simulateDataChurnNaive();
+            GlobalMetadataManagerPtr->printStatisticsNaive(log_file);
+
         }else if(dt == DedupType::DedupFirst){
             GlobalMetadataManagerPtr->reserveDedupIntervalTable(files.size());
             int current_version = 0;
@@ -1491,7 +1501,7 @@ void traverseFilesList(string files_list) {
             GlobalMetadataManagerPtr->simulateDataChurn();
 
             // print statistic
-            GlobalMetadataManagerPtr->ScodePrintStatistics(log_file);
+            GlobalMetadataManagerPtr->printStatisticsScode(log_file);
 
         }else{
             std::cerr << "Error: Not support dedup type" << std::endl;

@@ -4,15 +4,20 @@ import string
 import pickle
 
 # 配置参数
-mutate_num = 99
-datasets_dir = '/home/cyf/ssd1/datasets_SYN'
-working_dir = '/home/cyf/ssd1/datasets_SYN_working'
+mutate_num = 29
+datasets_dir = '/home/cyf/ssd0/MUD_SYN/syn1'
+working_dir = '/home/cyf/ssd0/datasets_SYN_working'
 average_file_size = 1024 * 1024 
 init_file_num = 300
 
 delete_percent = 0.01  # 删除的文件比例
 modify_percent = 0.01  # 修改的文件比例
 new_file_percent = 0.01  # 新增的文件比例
+
+
+# modify mode 
+insert_bytes = 128
+insert_num = 10
 
 # 文件类，用来表示文件的属性
 class File:
@@ -78,7 +83,8 @@ def delete_file(fs):
     return fs
 
 
-# 模拟文件修改
+# 模拟文件修改 
+# 这个函数似乎是直接修改旧文件为随机的新文件，不用了，
 def modify_file(fs):
     num_files_to_modify = int(len(fs) * modify_percent)
     files_to_modify = random.sample(fs, num_files_to_modify)
@@ -86,6 +92,38 @@ def modify_file(fs):
         new_size = random.randint(1, average_file_size)  # 修改为新的文件大小
         file.size = new_size
         file.content = ''.join(random.choices(string.ascii_letters + string.digits, k=new_size))  # 修改文件内容
+    return fs
+
+def insert_content_V2(fs, insert_bytes, insert_num):
+    """
+    在文件内容中随机插入数据
+    :param fs: 文件系统列表
+    :param insert_bytes: 每次插入的字节/字符数
+    :param insert_num: 每个文件插入的次数
+    """
+    for file in fs:
+        if not file.content or len(file.content) == 0:
+            # 空文件则直接插入
+            file.content = ''.join(random.choices(string.ascii_letters + string.digits, k=insert_bytes))
+            file.size = len(file.content)
+            continue
+        
+        content_list = list(file.content)
+        
+        # 生成 insert_num 个随机插入位置（允许重复）
+        insert_positions = [random.randint(0, len(content_list)) for _ in range(insert_num)]
+        # 从后往前排序，避免插入后位置偏移
+        insert_positions.sort(reverse=True)
+        
+        for pos in insert_positions:
+            # 生成随机字符串
+            insert_str = ''.join(random.choices(string.ascii_letters + string.digits, k=insert_bytes))
+            # 在指定位置插入
+            content_list[pos:pos] = list(insert_str)
+        
+        file.content = ''.join(content_list)
+        file.size = len(file.content)
+    
     return fs
 
 
@@ -124,8 +162,8 @@ if __name__ == "__main__":
         fs = load_fs_from_dir(working_dir)
 
         # 模拟文件系统变化
-        fs = delete_file(fs)
-        fs = modify_file(fs)
+        # fs = delete_file(fs)
+        fs = insert_content_V2(fs, insert_bytes, insert_num)
         fs = create_new_file(fs)
 
         # 保存变更后的文件系统到working_dir

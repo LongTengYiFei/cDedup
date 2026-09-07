@@ -54,6 +54,11 @@ struct TupleEqualer {
 
 struct backupInfo{
     uint64_t backup_size;
+
+    // if dedup mode is Naive
+    uint64_t unique_data_size;
+
+    // if dedup mode is SIDedup
     uint64_t base_container_size;
     uint64_t delta_container_size;
     bool isBaseVersion;
@@ -84,9 +89,10 @@ class MetadataManager {
         void appendADR(uint64_t single_file_size, uint64_t single_file_dup_size);
         float getSampleRatio();
         void ScodeInit();
-        void ScodePrintStatistics(std::ofstream &log_file);
+        void printStatisticsScode(std::ofstream &log_file);
         void ScodeInitSingleFile();
         bool isBaseVersion();
+        void printStatisticsNaive(std::ofstream &log_file);
 
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value);
         int addNewEntry(const SHA1FP sha1, const ENTRY_VALUE value, int version);
@@ -115,7 +121,9 @@ class MetadataManager {
 
         // data churn simulation
         void simulateDataChurn();
+        void simulateDataChurnNaive();
         void appendBackupInfo(const backupInfo& info);
+
 
     private:
         using fpTable = std::unordered_map<SHA1FP, ENTRY_VALUE, TupleHasher, TupleEqualer>;
@@ -181,6 +189,7 @@ class MetadataManager {
 
         std::vector<backupInfo> backup_infos;
 
+        // 可以同时用于Naive和SIDedup
         struct simulatedDataChurnResult{
             uint64_t data_size_after_churn_origin;
             uint64_t data_size_after_churn_stored;

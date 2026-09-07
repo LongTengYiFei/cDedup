@@ -441,7 +441,7 @@ bool MetadataManager::isBaseVersion(){
     return isCurrentBase;
 }
 
-void MetadataManager::ScodePrintStatistics(std::ofstream &log_file){
+void MetadataManager::printStatisticsScode(std::ofstream &log_file){
     log_file << "--- --- --- ScoDe statistics --- --- ---" << std::endl;
     log_file << "Base IDs: " << std::endl;
     for(auto& table: this->current_base_FP_tables){
@@ -472,6 +472,17 @@ void MetadataManager::ScodePrintStatistics(std::ofstream &log_file){
         log_file << std::endl;
     }
 
+    log_file << "Data Churn Simulation Results: " << std::endl;
+    for(int i=0; i<simulated_data_churn_results.size(); i++){
+        log_file << "Churn num: " << (i+20) << std::endl;
+        log_file << "Data size after churn origin: " << simulated_data_churn_results[i].data_size_after_churn_origin << std::endl;
+        log_file << "Data size after churn stored: " << simulated_data_churn_results[i].data_size_after_churn_stored << std::endl;
+        log_file << "Actual dedup ratio after churn: " << simulated_data_churn_results[i].actual_dedup_ratio_after_churn << std::endl;
+    }
+}
+
+void MetadataManager::printStatisticsNaive(std::ofstream &log_file){
+    log_file << "--- --- --- Naive statistics --- --- ---" << std::endl;
     log_file << "Data Churn Simulation Results: " << std::endl;
     for(int i=0; i<simulated_data_churn_results.size(); i++){
         log_file << "Churn num: " << (i+20) << std::endl;
@@ -697,4 +708,35 @@ void MetadataManager::simulateDataChurn(){
 
 void MetadataManager::appendBackupInfo(const backupInfo& info){
     backup_infos.push_back(info);
+}
+
+void MetadataManager::simulateDataChurnNaive(){
+    int data_churn_min_num = 20;
+    int data_churn_max_num = 100;
+    int backup_num = backup_infos.size();
+
+    // 正确性检查
+    if(backup_num < data_churn_max_num){
+        printf("simulateDataChurn error: backup num %d < data churn max num %d\n", backup_num, data_churn_max_num);
+        return ;
+    }
+
+    for(int churn_num = data_churn_min_num; churn_num <= data_churn_max_num; churn_num++){
+
+        uint64_t data_size_after_churn_origin = 0;
+        uint64_t data_size_after_churn_stored = 0;
+        int delte_num = backup_num - churn_num;
+
+        for(int i=delte_num; i<=backup_num-1; i++){
+            data_size_after_churn_origin += backup_infos[i].backup_size;
+            data_size_after_churn_stored += backup_infos[i].unique_data_size;
+
+        }
+
+        float actual_dedup_ratio_after_churn =  ((float)data_size_after_churn_origin - (float)data_size_after_churn_stored) 
+                                    / (float)data_size_after_churn_origin;
+
+        simulatedDataChurnResult result{data_size_after_churn_origin, data_size_after_churn_stored, actual_dedup_ratio_after_churn};
+        simulated_data_churn_results.push_back(result);
+    }
 }
